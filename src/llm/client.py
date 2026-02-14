@@ -4,35 +4,17 @@ src/llm/client.py
 
 Unified LLM / VLM client wrapper.
 
-Design goals:
-- One entry point for all model calls in the system:
-    - extract constraints (Planner)
-    - judge constraint (Checker backend)
-    - verify pair (Verifier backend)
-- Built-in caching (via src/llm/cache.py)
-- Backend-agnostic (OpenAI / Gemini / Qwen / mock)
-- Deterministic option (temperature=0 + keep-first cache)
+Key fixes for "qualified skeleton":
+- Mock backend MUST return STRICT JSON for tasks that require JSON parsing.
+- chat() keeps returning raw text (string), to match existing prompt parsers.
+- Provider backends can be plugged in later.
 
-IMPORTANT:
-This file does NOT hardcode a specific provider.
-You must implement provider adapters inside `_call_backend`.
-
-Current implementation:
-- Supports a "mock" backend (for dry-run tests)
-- Provides a clean structure to plug real APIs
-
-Usage example:
-
-    client = LLMClient(
-        model="gpt-4o-mini",
-        cache=SqliteCache("runs/_cache/llm_cache.sqlite3"),
-    )
-
-    text = client.chat(
-        task="extract_constraints",
-        messages=[{"role": "user", "content": "..."}],
-        temperature=0.0,
-    )
+Supported tasks:
+- extract_constraints
+- judge_constraint
+- verify_pair
+- generate_edit_instruction
+- general
 
 """
 
@@ -40,6 +22,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+import json
+import re
+import hashlib
 
 from src.llm.cache import SqliteCache, NullCache, make_cache_key
 
@@ -64,14 +49,9 @@ class LLMClient:
     """
     Unified client for text and vision models.
 
-    Supported tasks (recommended naming):
-      - "extract_constraints"
-      - "judge_constraint"
-      - "verify_pair"
-      - "general"
-
-    This client does NOT assume a specific provider.
-    Implement `_call_backend()` for your API.
+    Notes:
+- This client returns raw text. Your prompt modules parse JSON from text.
+- Mock backend returns strict JSON for JSON-tasks.
     """
 
     def __init__(
@@ -137,8 +117,8 @@ class LLMClient:
             if hit is not None:
                 return hit.resp_text
 
-        # Call actual backend
         resp_text = self._call_backend(
+            task=task,
             messages=messages,
             images=images,
             params=params,
@@ -149,7 +129,7 @@ class LLMClient:
                 key=key,
                 resp_text=resp_text,
                 resp_json=None,
-                meta={"task": task, "model": self.model},
+                meta={"task": task, "model": self.model, "backend": self.backend},
             )
 
         return resp_text
@@ -160,40 +140,34 @@ class LLMClient:
 
     def _call_backend(
         self,
+        task: str,
         messages: List[Dict[str, Any]],
         images: Optional[List[str]],
         params: LLMParams,
     ) -> str:
-        """
-        Dispatch to provider backend.
-
-        You can extend this function to support:
-          - OpenAI
-          - Gemini
-          - Qwen
-          - Azure
-        """
-
         if self.backend == "mock":
-            return self._mock_response(messages)
+            return self._mock_response(task=task, messages=messages, images=images)
 
         if self.backend == "openai":
             return self._call_openai(messages, images, params)
 
         if self.backend == "gemini":
-            return self._call_gemini(messages, images, params)
+            # keep as explicit error (but skeleton can still run with backend=mock)
+            raise NotImplementedError("Gemini backend not implemented yet.")
 
         raise ValueError(f"Unsupported backend: {self.backend}")
 
     # ============================================================
-    # Mock backend (safe for dry-run)
+    # Mock backend (STRICT JSON)
     # ============================================================
 
-    def _mock_response(self, messages: List[Dict[str, Any]]) -> str:
+    def _mock_response(self, task: str, messages: List[Dict[str, Any]], images: Optional[List[str]]) -> str:
         """
         Deterministic mock model.
-        Always returns a simple echo-style response.
-        Useful for pipeline testing without API cost.
+
+        IMPORTANT:
+- For JSON-tasks, MUST return strict JSON (no extra text).
+- For general, can return simple text.
         """
         last_user = ""
         for m in reversed(messages):
@@ -201,7 +175,180 @@ class LLMClient:
                 last_user = str(m.get("content", ""))
                 break
 
-        return f"[MOCK RESPONSE] Received: {last_user[:200]}"
+        prompt_text = self._extract_user_prompt_text(last_user)
+
+        if task == "extract_constraints":
+            constraints = self._mock_extract_constraints(prompt_text)
+            return json.dumps({"constraints": constraints}, ensure_ascii=False)
+
+        if task == "judge_constraint":
+            # Always "pass" in mock so refine loop can terminate cleanly without oracle.
+            return json.dumps(
+                {
+                    "passed": True,
+                    "reason": "Mock judge: treated as passed.",
+                    "edit_instruction": None,
+                    "confidence": 0.9,
+                },
+                ensure_ascii=False,
+            )
+
+        if task == "verify_pair":
+            return json.dumps(
+                {
+                    "decision": "same",
+                    "reason": "Mock verifier: no vision, keep same.",
+                    "confidence": 0.7,
+                },
+                ensure_ascii=False,
+            )
+
+        if task == "generate_edit_instruction":
+            # Provide a minimal placeholder instruction
+            return json.dumps(
+                {
+                    "edit_instruction": "Apply a minimal localized edit to satisfy the failed constraint. Preserve other elements.",
+                    "confidence": 0.7,
+                },
+                ensure_ascii=False,
+            )
+
+        # general fallback
+        return f"[MOCK] {prompt_text[:200]}"
+
+    def _extract_user_prompt_text(self, user_block: str) -> str:
+        """
+        Try to extract the prompt body from our planner templates.
+        """
+        # planner template uses:
+        # User prompt:
+        # """
+        # {prompt}
+        # """
+        m = re.search(r'User prompt:\s*"""(.*?)"""', user_block, re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        return user_block.strip()
+
+    def _mock_extract_constraints(self, prompt_text: str) -> List[Dict[str, Any]]:
+        """
+        Produce a non-empty, stable set of constraints.
+        Heuristic: detect common patterns (count, text, style keywords).
+        """
+        p = prompt_text.lower()
+
+        # subject guess
+        subject = "object"
+        for cand in ["panda", "cat", "dog", "person", "man", "woman", "car", "tree", "robot"]:
+            if cand in p:
+                subject = cand
+                break
+
+        # count guess (digit)
+        count_val = None
+        m = re.search(r"\b(\d+)\b", p)
+        if m:
+            count_val = m.group(1)
+        else:
+            # word numbers
+            word_map = {
+                "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
+                "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+            }
+            for w, v in word_map.items():
+                if re.search(rf"\b{w}\b", p):
+                    count_val = v
+                    break
+
+        # style attribute guess
+        style_val = None
+        for style in ["watercolor", "oil painting", "sketch", "cartoon", "photorealistic", "anime"]:
+            if style in p:
+                style_val = style
+                break
+
+        # text rendering guess
+        text_val = None
+        m2 = re.search(r'"([^"]+)"', prompt_text)
+        if m2:
+            text_val = m2.group(1).strip()
+
+        out: List[Dict[str, Any]] = []
+        cid = 1
+
+        # OBJECT
+        out.append(
+            {
+                "id": f"C{cid}",
+                "type": "OBJECT",
+                "object": subject,
+                "value": None,
+                "relation": None,
+                "reference": None,
+                "confidence": 0.9,
+            }
+        )
+        cid += 1
+
+        # COUNT (optional)
+        if count_val is not None:
+            out.append(
+                {
+                    "id": f"C{cid}",
+                    "type": "COUNT",
+                    "object": subject,
+                    "value": str(count_val),
+                    "relation": None,
+                    "reference": None,
+                    "confidence": 0.85,
+                }
+            )
+            cid += 1
+
+        # ATTRIBUTE (optional)
+        if style_val is not None:
+            out.append(
+                {
+                    "id": f"C{cid}",
+                    "type": "ATTRIBUTE",
+                    "object": "overall_style",
+                    "value": style_val,
+                    "relation": None,
+                    "reference": None,
+                    "confidence": 0.8,
+                }
+            )
+            cid += 1
+
+        # TEXT (optional)
+        if text_val is not None:
+            out.append(
+                {
+                    "id": f"C{cid}",
+                    "type": "TEXT",
+                    "object": None,
+                    "value": text_val,
+                    "relation": None,
+                    "reference": None,
+                    "confidence": 0.8,
+                }
+            )
+            cid += 1
+
+        # Always add one spatial placeholder to keep graph non-trivial
+        out.append(
+            {
+                "id": f"C{cid}",
+                "type": "SPATIAL",
+                "object": subject,
+                "value": None,
+                "relation": "center",
+                "reference": "image",
+                "confidence": 0.6,
+            }
+        )
+
+        return out
 
     # ============================================================
     # OpenAI backend (example structure)
@@ -217,8 +364,8 @@ class LLMClient:
         Example OpenAI-compatible implementation.
 
         NOTE:
-        - Requires openai package or http client.
-        - This is a skeleton; fill with actual API call.
+- This is a skeleton; fill with actual API call when you use backend="openai".
+- For skeleton qualification, backend="mock" must be sufficient.
         """
         try:
             from openai import OpenAI  # type: ignore
@@ -227,13 +374,11 @@ class LLMClient:
 
         client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
-        # Basic chat call (vision if images provided)
         if images:
-            # Vision style call (pseudo-structure)
             content = []
-            for m in messages:
-                if m["role"] == "user":
-                    content.append({"type": "text", "text": m["content"]})
+            # merge all user texts
+            merged_user = "\n".join([str(m.get("content", "")) for m in messages if m.get("role") == "user"])
+            content.append({"type": "text", "text": merged_user})
             for img in images:
                 content.append({"type": "image_url", "image_url": {"url": img}})
             resp = client.chat.completions.create(
@@ -251,19 +396,3 @@ class LLMClient:
             )
 
         return resp.choices[0].message.content or ""
-
-    # ============================================================
-    # Gemini backend (skeleton)
-    # ============================================================
-
-    def _call_gemini(
-        self,
-        messages: List[Dict[str, Any]],
-        images: Optional[List[str]],
-        params: LLMParams,
-    ) -> str:
-        """
-        Skeleton for Gemini-style API.
-        You must fill actual SDK call.
-        """
-        raise NotImplementedError("Gemini backend not implemented yet.")

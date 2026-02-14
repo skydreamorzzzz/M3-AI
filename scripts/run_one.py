@@ -2,31 +2,10 @@
 """
 scripts/run_one.py
 
-Run full pipeline for ONE prompt:
-    1) Extract constraints (Planner)
-    2) Build graph (build_drg)
-    3) Validate DAG
-    4) Schedule + Refine loop
-    5) Save traces + summary
+One-click end-to-end pipeline run (works under mock).
 
-This script connects:
-- src/llm/*
-- src/graph/*
-- src/scheduler/*
-- src/refine/*
-- src/eval/* (optional, later)
-
-It is designed for:
-- single prompt debugging
-- sanity check of full 3-layer architecture
-
-Example usage:
-
-    python scripts/run_one.py \
-        --prompt "A watercolor painting of five pandas..." \
-        --model gpt-4o-mini \
-        --backend openai
-
+Run:
+  python scripts/run_one.py --prompt "A watercolor painting of five pandas..."
 """
 
 from __future__ import annotations
@@ -34,7 +13,12 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
-from typing import Dict
+import sys
+
+# --- ensure project_root on sys.path ---
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from src.io.schemas import PromptItem, ConstraintGraph
 from src.llm.cache import SqliteCache
@@ -47,26 +31,19 @@ from src.graph.validate_graph import ensure_dag
 from src.scheduler.dag_topo import DagTopoScheduler
 from src.refine.checker import Checker
 from src.refine.editor import Editor, EditorParams, ArtifactHandle
-from src.refine.verifier import Verifier
+from src.refine.verifier import Verifier, VerifierParams
 from src.refine.loop_core import run_refine_loop, LoopParams
 
-
-# ============================================================
-# Main
-# ============================================================
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--prompt", type=str, required=True)
     parser.add_argument("--model", type=str, default="gpt-4o-mini")
     parser.add_argument("--backend", type=str, default="mock")
-    parser.add_argument("--cache", type=str, default="runs/_cache/llm_cache.sqlite3")
+    parser.add_argument("--cache", type=str, default=str(ROOT / "runs/_cache/llm_cache.sqlite3"))
     parser.add_argument("--max_rounds", type=int, default=5)
     args = parser.parse_args()
 
-    # ----------------------------
-    # Setup cache + client
-    # ----------------------------
     cache = SqliteCache(args.cache)
     client = LLMClient(
         model=args.model,
@@ -74,26 +51,20 @@ def main():
         backend=args.backend,
     )
 
-    # ----------------------------
     # 1) Planner
-    # ----------------------------
     constraints = extract_constraints(client, args.prompt)
 
-    # ----------------------------
     # 2) Graph
-    # ----------------------------
     graph: ConstraintGraph = build_drg(constraints)
-    graph, report = ensure_dag(graph)
+    graph, _report = ensure_dag(graph)
 
-    # ----------------------------
-    # 3) Setup refine components
-    # ----------------------------
+    # 3) Refine components
     judge_backend = LLMJudgeBackend(client)
     verify_backend = LLMVerifyBackend(client)
 
     checker = Checker(backend=judge_backend)
     editor = Editor(params=EditorParams(dry_run=True))
-    verifier = Verifier(backend=verify_backend)
+    verifier = Verifier(params=VerifierParams(mode="status_only"), backend=verify_backend)
 
     scheduler = DagTopoScheduler()
 
@@ -104,15 +75,11 @@ def main():
         graph=graph,
     )
 
-    # initial artifact (placeholder)
     initial_artifact = ArtifactHandle(
-        payload="https://dummy-image-placeholder",
+        payload="mock://image/init",
         meta={"source": "initial"},
     )
 
-    # ----------------------------
-    # 4) Run refine loop
-    # ----------------------------
     best, traces, summary = run_refine_loop(
         item=item,
         scheduler=scheduler,
@@ -123,10 +90,7 @@ def main():
         initial_artifact=initial_artifact,
     )
 
-    # ----------------------------
-    # 5) Save results
-    # ----------------------------
-    out_dir = Path("runs/demo")
+    out_dir = ROOT / "runs/demo"
     out_dir.mkdir(parents=True, exist_ok=True)
 
     with open(out_dir / "traces.json", "w", encoding="utf-8") as f:
@@ -139,6 +103,7 @@ def main():
     print("Final pass:", summary.final_pass)
     print("Total rounds:", summary.total_rounds)
     print("Conflicts:", summary.conflict_count)
+    print("Output:", str(out_dir))
 
 
 if __name__ == "__main__":

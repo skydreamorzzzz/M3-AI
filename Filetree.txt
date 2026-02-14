@@ -1,0 +1,102 @@
+M3Style-DRG-Refine/
+├─ README.md
+├─ LICENSE
+├─ requirements.txt
+├─ .env.example
+├─ .gitignore
+│
+├─ configs/
+│  ├─ common.yaml
+│  ├─ models.yaml                    # 统一管理LLM/VLM/Editor版本与参数
+│  ├─ baseline_m3style.yaml
+│  ├─ ours_drg_conflict.yaml
+│  └─ ablations/
+│     ├─ abl_no_struct.yaml
+│     ├─ abl_struct_only.yaml
+│     ├─ abl_struct_dag.yaml
+│     ├─ abl_struct_conflict.yaml
+│     └─ abl_struct_dag_conflict.yaml
+│
+├─ data/
+│  └─ benchmarks/
+│     ├─ geneval/
+│     │  └─ prompts.jsonl
+│     └─ coupled/
+│        ├─ prompts.jsonl
+│        ├─ schema.json
+│        └─ stats.json
+│
+├─ src/
+│  ├─ utils/
+│  │  ├─ env_utils.py                # 统一加载.env、路径、API key
+│  │  ├─ logging.py
+│  │  ├─ seed.py                     # LLM temp=0等；其他seed尽量固定
+│  │  └─ timer.py
+│  │
+│  ├─ io/
+│  │  ├─ schemas.py                  # PromptItem/Constraint/Graph/TraceStep/Summary
+│  │  ├─ load_prompts.py
+│  │  └─ save_traces.py
+│  │
+│  ├─ llm/
+│  │  ├─ client.py                   # 统一封装LLM调用
+│  │  ├─ cache.py                    # 本地缓存：sqlite/json（推荐sqlite）
+│  │  ├─ normalize.py                # 受控枚举/归一化（color/relation等）
+│  │  └─ prompts/
+│  │     ├─ extract_constraints.txt   # prompt -> constraints JSON
+│  │     ├─ build_graph.txt          # 可选：LLM直接输出edges+reason
+│  │     └─ fix_json.txt             # JSON不合法时修复
+│  │
+│  ├─ graph/
+│  │  ├─ build_drg.py                # constraints -> DRG（规则建依赖边）
+│  │  ├─ validate_graph.py           # DAG检查/断环策略/日志
+│  │  └─ metrics_coupling.py         # coupling_index, dependency_density等
+│  │
+│  ├─ refine/
+│  │  ├─ checker.py                  # PASS/FAIL + 生成修复指令
+│  │  ├─ editor.py                   # 编辑器接口 + retry + timeout
+│  │  ├─ verifier.py                 # pairwise better/worse/same 或score
+│  │  └─ loop_core.py                # 通用迭代框架（可注入scheduler）
+│  │
+│  ├─ baseline/
+│  │  └─ m3style_loop.py             # 最基础M3-style（顺序checklist）
+│  │
+│  ├─ scheduler/
+│  │  ├─ sequential.py               # baseline顺序
+│  │  ├─ dag_topo.py                 # DAG拓扑排序调度
+│  │  ├─ conflict_matrix.py          # conflict统计（含持久化可选）
+│  │  └─ conflict_aware.py           # score = gain - alpha*risk（冲突惩罚）
+│  │
+│  └─ eval/
+│     ├─ metrics.py                  # pass_rate/avg_rounds/conflict_rate
+│     ├─ oscillation.py              # oscillation_rate（A↔B振荡检测）
+│     ├─ protection.py               # constraint_protection_rate
+│     ├─ aggregate.py
+│     └─ stratify.py                 # 按耦合度分桶统计
+│
+├─ scripts/
+│  ├─ make_coupled_benchmark.py       # 模板化生成高耦合prompts + stats
+│  ├─ run_one.py                      # 单条调试（保存中间图/trace）
+│  ├─ run_batch.py                    # 批量跑一个config一个benchmark
+│  ├─ run_ablations.py                # 一键跑ablation组
+│  └─ analyze.py                      # 出表+画图（含热图/分桶曲线）
+│
+├─ runs/
+│  ├─ README.md                       # 说明哪些文件不提交、如何复现生成
+│  ├─ _figs/
+│  │  ├─ pass_rate_by_bucket.png
+│  │  ├─ avg_rounds_bar.png
+│  │  └─ conflict_heatmap.png
+│  └─ <run_id>/
+│     ├─ config.yaml
+│     ├─ summary.json
+│     ├─ traces.jsonl
+│     ├─ artifacts/                   # 可选：conflict_matrix、graph缓存等
+│     │  └─ conflict_matrix.npz
+│     └─ images/                      # 大文件：默认gitignore
+│        └─ <prompt_id>/round*.png
+│
+└─ paper/
+   ├─ outline.md
+   ├─ figures/
+   └─ tables/

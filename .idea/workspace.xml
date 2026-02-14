@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="AutoImportSettings">
+    <option name="autoReloadType" value="SELECTIVE" />
+  </component>
+  <component name="ChangeListManager">
+    <list default="true" id="71504057-4520-4134-b253-06ecf8f55773" name="更改" comment="">
+      <change afterPath="$PROJECT_DIR$/.idea/M3plus.iml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/Filetree.txt" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/run_batch.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/run_compare.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/run_one.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/eval/aggregate.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/eval/metrics.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/eval/oscillation.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/eval/protection.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/eval/stratify.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/graph/build_drg.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/graph/metrics_coupling.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/graph/validate_graph.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/io/schemas.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/llm/cache.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/llm/client.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/llm/prompts/extract_constraints.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/llm/prompts/judge_constraint.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/llm/prompts/verify_pair.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/refine/checker.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/refine/editor.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/refine/loop_core.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/refine/verifier.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/scheduler/conflict_aware.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/scheduler/conflict_matrix.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/src/scheduler/dag_topo.py" afterDir="false" />
+    </list>
+    <option name="SHOW_DIALOG" value="false" />
+    <option name="HIGHLIGHT_CONFLICTS" value="true" />
+    <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
+    <option name="LAST_RESOLUTION" value="IGNORE" />
+  </component>
+  <component name="FileTemplateManagerImpl">
+    <option name="RECENT_TEMPLATES">
+      <list>
+        <option value="Python Script" />
+      </list>
+    </option>
+  </component>
+  <component name="Git.Settings">
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
+  </component>
+  <component name="ProjectColorInfo"><![CDATA[{
+  "associatedIndex": 0
+}]]></component>
+  <component name="ProjectId" id="39f7lbcdsjrYUZiTtfW7bfeba2Z" />
+  <component name="ProjectLevelVcsManager">
+    <ConfirmationsSetting value="2" id="Add" />
+  </component>
+  <component name="ProjectViewState">
+    <option name="hideEmptyMiddlePackages" value="true" />
+    <option name="showLibraryContents" value="true" />
+  </component>
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "ASKED_SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "SHARE_PROJECT_CONFIGURATION_FILES": "true",
+    "git-widget-placeholder": "master",
+    "ignore.virus.scanning.warn.message": "true"
+  }
+}]]></component>
+  <component name="SharedIndexes">
+    <attachedChunks>
+      <set>
+        <option value="bundled-python-sdk-1bde30d8e611-7b97d883f26b-com.jetbrains.pycharm.pro.sharedIndexes.bundled-PY-252.25557.130" />
+      </set>
+    </attachedChunks>
+  </component>
+  <component name="TaskManager">
+    <task active="true" id="Default" summary="默认任务">
+      <changelist id="71504057-4520-4134-b253-06ecf8f55773" name="更改" comment="" />
+      <created>1771075422326</created>
+      <option name="number" value="Default" />
+      <option name="presentableId" value="Default" />
+      <updated>1771075422326</updated>
+    </task>
+    <servers />
+  </component>
+</project>

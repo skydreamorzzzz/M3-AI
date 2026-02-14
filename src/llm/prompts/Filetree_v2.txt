@@ -1,0 +1,54 @@
+project_root/
+│
+├── data/
+│   └── prompts.json
+│
+├── runs/
+│   ├── demo/
+│   ├── batch/
+│   ├── compare/
+│   └── _cache/
+│       └── llm_cache.sqlite3
+│
+├── scripts/
+│   ├── run_one.py
+│   ├── run_batch.py
+│   └── run_compare.py
+│
+├── src/
+│
+│   ├── io/
+│   │   └── schemas.py
+│
+│   ├── graph/
+│   │   ├── build_drg.py
+│   │   ├── validate_graph.py
+│   │   └── metrics_coupling.py
+│
+│   ├── scheduler/
+│   │   ├── dag_topo.py
+│   │   └── conflict_aware.py
+│
+│   ├── refine/
+│   │   ├── checker.py
+│   │   ├── editor.py
+│   │   ├── verifier.py
+│   │   └── loop_core.py
+│
+│   ├── eval/
+│   │   ├── oscillation.py
+│   │   ├── aggregate.py
+│   │   └── stratify.py
+│
+│   └── llm/
+│       ├── cache.py
+│       ├── client.py
+│       ├── normalize.py
+│       │
+│       └── prompts/
+│           ├── extract_constraints.py
+│           ├── judge_constraint.py
+│           ├── verify_pair.py
+│           └── edit_instruction.py
+│
+└── README.md

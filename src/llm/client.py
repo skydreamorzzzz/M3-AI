@@ -4,18 +4,26 @@ src/llm/client.py
 
 Unified LLM / VLM client wrapper.
 
-Key fixes for "qualified skeleton":
-- Mock backend MUST return STRICT JSON for tasks that require JSON parsing.
-- chat() keeps returning raw text (string), to match existing prompt parsers.
-- Provider backends can be plugged in later.
+Design goals:
+- One entry point for all model calls in the system:
+  - extract constraints (Planner)
+  - judge constraint (Checker backend)
+  - verify pair (Verifier backend)
+- Built-in caching (via src/llm/cache.py)
+- Backend-agnostic (OpenAI / Gemini / Qwen / mock)
+- Deterministic option (temperature=0 + keep-first cache)
 
-Supported tasks:
-- extract_constraints
-- judge_constraint
-- verify_pair
-- generate_edit_instruction
-- general
+IMPORTANT:
+- This file does NOT hardcode a specific provider.
+- Provider adapters live inside `_call_backend`.
+- For the skeleton stage, "mock" backend MUST be task-aware and MUST return STRICT JSON
+  for tasks that require parsing.
 
+Supported tasks (recommended naming):
+- "extract_constraints"
+- "judge_constraint"
+- "verify_pair"
+- "general"
 """
 
 from __future__ import annotations
@@ -24,7 +32,6 @@ from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 import json
 import re
-import hashlib
 
 from src.llm.cache import SqliteCache, NullCache, make_cache_key
 
@@ -46,13 +53,7 @@ class LLMParams:
 # ============================================================
 
 class LLMClient:
-    """
-    Unified client for text and vision models.
-
-    Notes:
-- This client returns raw text. Your prompt modules parse JSON from text.
-- Mock backend returns strict JSON for JSON-tasks.
-    """
+    """Unified client for text and vision models."""
 
     def __init__(
         self,
@@ -80,26 +81,12 @@ class LLMClient:
         images: Optional[List[str]] = None,
         use_cache: bool = True,
     ) -> str:
-        """
-        Generic chat entry.
-
-        Args:
-            task: logical task name
-            messages: chat messages list
-            params: decoding params
-            images: optional image paths / URIs
-            use_cache: enable cache lookup
-
-        Returns:
-            model raw text response
-        """
+        """Generic chat entry."""
         params = params or LLMParams()
-
         payload = {
             "messages": messages,
             "images": images or [],
         }
-
         key = make_cache_key(
             task=task,
             model=self.model,
@@ -131,7 +118,6 @@ class LLMClient:
                 resp_json=None,
                 meta={"task": task, "model": self.model, "backend": self.backend},
             )
-
         return resp_text
 
     # ============================================================
@@ -145,210 +131,171 @@ class LLMClient:
         images: Optional[List[str]],
         params: LLMParams,
     ) -> str:
+        """Dispatch to provider backend."""
         if self.backend == "mock":
-            return self._mock_response(task=task, messages=messages, images=images)
-
+            return self._mock_response(task=task, messages=messages, images=images, params=params)
         if self.backend == "openai":
             return self._call_openai(messages, images, params)
-
         if self.backend == "gemini":
-            # keep as explicit error (but skeleton can still run with backend=mock)
-            raise NotImplementedError("Gemini backend not implemented yet.")
-
+            return self._call_gemini(messages, images, params)
         raise ValueError(f"Unsupported backend: {self.backend}")
 
     # ============================================================
-    # Mock backend (STRICT JSON)
+    # Mock backend (safe for dry-run)
     # ============================================================
 
-    def _mock_response(self, task: str, messages: List[Dict[str, Any]], images: Optional[List[str]]) -> str:
+    def _mock_response(
+        self,
+        task: str,
+        messages: List[Dict[str, Any]],
+        images: Optional[List[str]],
+        params: LLMParams,
+    ) -> str:
         """
-        Deterministic mock model.
+        Deterministic task-aware mock model.
 
-        IMPORTANT:
-- For JSON-tasks, MUST return strict JSON (no extra text).
-- For general, can return simple text.
+        MUST return STRICT JSON for:
+        - extract_constraints
+        - judge_constraint
+        - verify_pair
+
+        This is critical because prompt parsers are strict JSON parsers.
         """
+        # Grab last user content (best-effort)
         last_user = ""
         for m in reversed(messages):
             if m.get("role") == "user":
                 last_user = str(m.get("content", ""))
                 break
 
-        prompt_text = self._extract_user_prompt_text(last_user)
-
         if task == "extract_constraints":
-            constraints = self._mock_extract_constraints(prompt_text)
-            return json.dumps({"constraints": constraints}, ensure_ascii=False)
+            return self._mock_extract_constraints(last_user)
 
         if task == "judge_constraint":
-            # Always "pass" in mock so refine loop can terminate cleanly without oracle.
-            return json.dumps(
-                {
-                    "passed": True,
-                    "reason": "Mock judge: treated as passed.",
-                    "edit_instruction": None,
-                    "confidence": 0.9,
-                },
-                ensure_ascii=False,
-            )
+            # For skeleton smoke test: default to "passed=true" so loop can converge fast.
+            obj = {
+                "passed": True,
+                "reason": "mock: assume constraint satisfied",
+                "edit_instruction": None,
+                "confidence": 0.60,
+            }
+            return json.dumps(obj, ensure_ascii=False)
 
         if task == "verify_pair":
-            return json.dumps(
-                {
-                    "decision": "same",
-                    "reason": "Mock verifier: no vision, keep same.",
-                    "confidence": 0.7,
-                },
-                ensure_ascii=False,
-            )
-
-        if task == "generate_edit_instruction":
-            # Provide a minimal placeholder instruction
-            return json.dumps(
-                {
-                    "edit_instruction": "Apply a minimal localized edit to satisfy the failed constraint. Preserve other elements.",
-                    "confidence": 0.7,
-                },
-                ensure_ascii=False,
-            )
-
-        # general fallback
-        return f"[MOCK] {prompt_text[:200]}"
-
-    def _extract_user_prompt_text(self, user_block: str) -> str:
-        """
-        Try to extract the prompt body from our planner templates.
-        """
-        # planner template uses:
-        # User prompt:
-        # """
-        # {prompt}
-        # """
-        m = re.search(r'User prompt:\s*"""(.*?)"""', user_block, re.DOTALL)
-        if m:
-            return m.group(1).strip()
-        return user_block.strip()
-
-    def _mock_extract_constraints(self, prompt_text: str) -> List[Dict[str, Any]]:
-        """
-        Produce a non-empty, stable set of constraints.
-        Heuristic: detect common patterns (count, text, style keywords).
-        """
-        p = prompt_text.lower()
-
-        # subject guess
-        subject = "object"
-        for cand in ["panda", "cat", "dog", "person", "man", "woman", "car", "tree", "robot"]:
-            if cand in p:
-                subject = cand
-                break
-
-        # count guess (digit)
-        count_val = None
-        m = re.search(r"\b(\d+)\b", p)
-        if m:
-            count_val = m.group(1)
-        else:
-            # word numbers
-            word_map = {
-                "one": "1", "two": "2", "three": "3", "four": "4", "five": "5",
-                "six": "6", "seven": "7", "eight": "8", "nine": "9", "ten": "10",
+            obj = {
+                "decision": "same",
+                "reason": "mock: no real images, treat as same",
+                "confidence": 0.60,
             }
-            for w, v in word_map.items():
-                if re.search(rf"\b{w}\b", p):
-                    count_val = v
+            return json.dumps(obj, ensure_ascii=False)
+
+        # Fallback: still JSON (so callers can choose to parse if they want)
+        obj = {
+            "text": f"mock: {last_user[:200]}",
+            "task": task,
+        }
+        return json.dumps(obj, ensure_ascii=False)
+
+    def _mock_extract_constraints(self, user_text: str) -> str:
+        """
+        Create a small, deterministic constraint list from the prompt text.
+
+        Output format:
+        { "constraints": [ {...}, ... ] }
+        """
+        prompt = self._extract_prompt_from_template(user_text)
+        prompt_l = prompt.lower()
+
+        # naive number extraction (supports "one".."ten" + digits)
+        word2num = {
+            "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+            "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10,
+        }
+        count_val: Optional[int] = None
+        # digits first
+        m = re.search(r"\b(\d+)\b", prompt_l)
+        if m:
+            try:
+                count_val = int(m.group(1))
+            except Exception:
+                count_val = None
+        if count_val is None:
+            for w, n in word2num.items():
+                if re.search(rf"\b{w}\b", prompt_l):
+                    count_val = n
                     break
 
-        # style attribute guess
-        style_val = None
-        for style in ["watercolor", "oil painting", "sketch", "cartoon", "photorealistic", "anime"]:
-            if style in p:
-                style_val = style
+        # detect a simple object keyword (extend later)
+        obj = None
+        for k in ["panda", "pandas", "cat", "dog", "person", "people", "man", "woman", "bench", "car"]:
+            if k in prompt_l:
+                obj = "panda" if "panda" in k else k
                 break
+        if obj is None:
+            obj = "unknown_object"
 
-        # text rendering guess
-        text_val = None
-        m2 = re.search(r'"([^"]+)"', prompt_text)
-        if m2:
-            text_val = m2.group(1).strip()
-
-        out: List[Dict[str, Any]] = []
+        constraints: List[Dict[str, Any]] = []
         cid = 1
 
-        # OBJECT
-        out.append(
-            {
-                "id": f"C{cid}",
-                "type": "OBJECT",
-                "object": subject,
-                "value": None,
-                "relation": None,
-                "reference": None,
-                "confidence": 0.9,
-            }
-        )
+        # OBJECT existence
+        constraints.append({
+            "id": f"C{cid}",
+            "type": "OBJECT",
+            "object": obj,
+            "value": None,
+            "relation": None,
+            "reference": None,
+            "confidence": 0.70,
+        })
         cid += 1
 
-        # COUNT (optional)
+        # COUNT if we found one
         if count_val is not None:
-            out.append(
-                {
-                    "id": f"C{cid}",
-                    "type": "COUNT",
-                    "object": subject,
-                    "value": str(count_val),
-                    "relation": None,
-                    "reference": None,
-                    "confidence": 0.85,
-                }
-            )
-            cid += 1
-
-        # ATTRIBUTE (optional)
-        if style_val is not None:
-            out.append(
-                {
-                    "id": f"C{cid}",
-                    "type": "ATTRIBUTE",
-                    "object": "overall_style",
-                    "value": style_val,
-                    "relation": None,
-                    "reference": None,
-                    "confidence": 0.8,
-                }
-            )
-            cid += 1
-
-        # TEXT (optional)
-        if text_val is not None:
-            out.append(
-                {
-                    "id": f"C{cid}",
-                    "type": "TEXT",
-                    "object": None,
-                    "value": text_val,
-                    "relation": None,
-                    "reference": None,
-                    "confidence": 0.8,
-                }
-            )
-            cid += 1
-
-        # Always add one spatial placeholder to keep graph non-trivial
-        out.append(
-            {
+            constraints.append({
                 "id": f"C{cid}",
-                "type": "SPATIAL",
-                "object": subject,
-                "value": None,
-                "relation": "center",
-                "reference": "image",
-                "confidence": 0.6,
-            }
-        )
+                "type": "COUNT",
+                "object": obj,
+                "value": count_val,
+                "relation": None,
+                "reference": None,
+                "confidence": 0.70,
+            })
+            cid += 1
 
-        return out
+        # STYLE heuristic
+        style = None
+        for s in ["watercolor", "oil", "sketch", "photorealistic", "anime", "cartoon"]:
+            if s in prompt_l:
+                style = s
+                break
+        if style:
+            constraints.append({
+                "id": f"C{cid}",
+                "type": "ATTRIBUTE",
+                "object": None,
+                "value": style,
+                "relation": None,
+                "reference": "global_style",
+                "confidence": 0.65,
+            })
+            cid += 1
+
+        out = {"constraints": constraints}
+        return json.dumps(out, ensure_ascii=False)
+
+    @staticmethod
+    def _extract_prompt_from_template(user_text: str) -> str:
+        """
+        Try to recover the original prompt from USER_TEMPLATE formatting.
+        Example template contains:
+        User prompt:  ...
+        """
+        # try triple-quoted block
+        m = re.search(r'User prompt:\s*"""\s*(.*?)\s*"""', user_text, re.DOTALL)
+        if m:
+            return m.group(1).strip()
+        # fallback: entire user_text
+        return user_text.strip()
 
     # ============================================================
     # OpenAI backend (example structure)
@@ -360,13 +307,7 @@ class LLMClient:
         images: Optional[List[str]],
         params: LLMParams,
     ) -> str:
-        """
-        Example OpenAI-compatible implementation.
-
-        NOTE:
-- This is a skeleton; fill with actual API call when you use backend="openai".
-- For skeleton qualification, backend="mock" must be sufficient.
-        """
+        """Example OpenAI-compatible implementation (skeleton)."""
         try:
             from openai import OpenAI  # type: ignore
         except Exception as e:
@@ -375,12 +316,14 @@ class LLMClient:
         client = OpenAI(api_key=self.api_key, base_url=self.base_url)
 
         if images:
+            # Vision-style call (pseudo-structure)
             content = []
-            # merge all user texts
-            merged_user = "\n".join([str(m.get("content", "")) for m in messages if m.get("role") == "user"])
-            content.append({"type": "text", "text": merged_user})
+            for m in messages:
+                if m["role"] == "user":
+                    content.append({"type": "text", "text": m["content"]})
             for img in images:
                 content.append({"type": "image_url", "image_url": {"url": img}})
+
             resp = client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": content}],
@@ -396,3 +339,16 @@ class LLMClient:
             )
 
         return resp.choices[0].message.content or ""
+
+    # ============================================================
+    # Gemini backend (skeleton)
+    # ============================================================
+
+    def _call_gemini(
+        self,
+        messages: List[Dict[str, Any]],
+        images: Optional[List[str]],
+        params: LLMParams,
+    ) -> str:
+        """Skeleton for Gemini-style API."""
+        raise NotImplementedError("Gemini backend not implemented yet.")

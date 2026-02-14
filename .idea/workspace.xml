@@ -4,39 +4,7 @@
     <option name="autoReloadType" value="SELECTIVE" />
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="71504057-4520-4134-b253-06ecf8f55773" name="更改" comment="">
-      <change afterPath="$PROJECT_DIR$/.idea/M3plus.iml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/inspectionProfiles/profiles_settings.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/misc.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/modules.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/Filetree.txt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/scripts/run_batch.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/scripts/run_compare.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/scripts/run_one.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/eval/aggregate.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/eval/metrics.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/eval/oscillation.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/eval/protection.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/eval/stratify.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/graph/build_drg.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/graph/metrics_coupling.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/graph/validate_graph.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/io/schemas.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/llm/cache.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/llm/client.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/llm/prompts/extract_constraints.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/llm/prompts/judge_constraint.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/llm/prompts/verify_pair.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/refine/checker.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/refine/editor.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/refine/loop_core.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/refine/verifier.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/scheduler/conflict_aware.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/scheduler/conflict_matrix.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/src/scheduler/dag_topo.py" afterDir="false" />
-    </list>
+    <list default="true" id="71504057-4520-4134-b253-06ecf8f55773" name="更改" comment="" />
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
     <option name="HIGHLIGHT_NON_ACTIVE_CHANGELIST" value="false" />
@@ -68,6 +36,7 @@
     "ASKED_SHARE_PROJECT_CONFIGURATION_FILES": "true",
     "ModuleVcsDetector.initialDetectionPerformed": "true",
     "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.TerminalTabsStorage.copyFrom.TerminalArrangementManager.252": "true",
     "RunOnceActivity.git.unshallow": "true",
     "SHARE_PROJECT_CONFIGURATION_FILES": "true",
     "git-widget-placeholder": "master",

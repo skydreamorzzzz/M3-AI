@@ -1,0 +1,61 @@
+一、文件核心定位
+该文件归属图校验 / 修复模块，核心目标是保障 DRG（Dependency-Relation Graph）的调度可用性，核心特性与边界如下：
+核心作用：仅针对 DRG 中的 dependency 边 做 “去环修复”，确保依赖图是有向无环图（DAG），避免拓扑排序和调度器崩溃；
+边界约束：
+✅ 强制要求 dependency 边无环（必须为 DAG）；
+❌ coupling 边允许成环，不参与 DAG 校验 / 修复；
+修复逻辑：若检测到环，按规则删除 “更弱” 的 dependency 边，直到无环或达到修复上限；
+模块特性：完全确定性算法（不依赖 LLM），仅修改 dependency 边，不改动 coupling 边。
+二、对外接口
+1. 主接口（核心修复）
+函数名	输入参数	输出类型	核心作用
+ensure_dag	ConstraintGraph, max_break_rounds	(ConstraintGraph, ValidationReport)	修复 dependency 边为 DAG，返回修复后图 + 校验报告
+输出说明：
+修复后 ConstraintGraph：dependency 边保证无环，coupling 边完全保留原样；
+ValidationReport：汇总校验 / 修复结果（是否有环、删除的边列表、去环轮数等）。
+2. 输出数据结构
+数据结构	核心作用
+RemovedEdge	单条删边记录，包含：source（源节点）、target（目标节点）、type（边类型）、weight（权重）、reason（删边原因）
+ValidationReport	整体校验报告，包含：has_cycle（是否检测到环）、removed_edges（删边列表）、break_rounds（去环迭代轮数）
+三、核心实现思路
+整体采用 “迭代去环 + 兜底保障” 的逻辑，流程如下：
+边拆分：从输入图中拆分出两类边 ——
+dep：dependency 边（需校验 / 修复为 DAG）；
+coup：coupling 边（不处理，原样保留）；
+迭代去环（最多执行 max_break_rounds 轮）：
+① 在 dep 边中检测是否存在环；
+② 若无环 → 修复完成，返回「dep + coup」组成的图；
+③ 若有环 → 从环中选择 “更弱” 的 dependency 边删除，同时记录到 ValidationReport；
+兜底策略（超过修复上限仍有环）：
+丢弃全部 dependency 边，仅保留 coupling 边，确保系统不崩溃（调度退化为无依赖 / 顺序执行）。
+四、核心规则与函数分解
+1. _find_one_cycle（环检测函数）
+核心作用：在 dependency 边中通过 DFS 找到任意一个有向环，返回环路径（如 [a, b, c, a]）；
+设计逻辑：只需找到一个环即可（后续删一条边后重新检测，无需全量找环），兼顾效率与确定性。
+2. _weak_dependency_score（边强弱评分函数）
+核心作用：为 dependency 边计算 “可移除优先级”，决定环中哪条边优先删除；
+评分策略（优先级：越弱越优先删）：
+边的目标节点类型	强弱等级	移除优先级
+spatial/relation/attribute	最弱	最高
+count/text	中等	中等
+object / 未知类型	最强	最低
+补充规则：同等级下，边的 weight 越小，优先级越高（越优先删）。
+3. _choose_edge_to_remove（环内选边函数）
+核心作用：基于边强弱评分，从环路径中选出 “最该删除” 的 dependency 边；
+选择逻辑：
+① 优先选 weak_rank 更高（更弱）的边；
+② 同 weak_rank 时，选 weight 更小的边。
+4. ensure_dag（主函数）
+核心作用：整合 “找环→选边→删边” 逻辑，迭代完成 dependency 边去环；
+输出规则：
+✅ 成功去环：返回「修复后 dep + 原 coup」的图，报告记录删边详情；
+❌ 超过上限：返回仅含 coup 边的图，报告标注 “兜底丢弃全部 dependency 边”。
+五、设计特点
+精准修复：仅处理 dependency 边，避免 coupling 双向边制造的假环干扰，聚焦调度核心需求；
+可解释性：ValidationReport 完整记录删边的节点、权重、原因及环路径，便于问题追溯；
+稳健兜底：即使建图质量极差，也会丢弃 dependency 边保证系统不崩溃，避免批量运行中断；
+确定性：所有删边规则可量化、无随机逻辑，输入相同则修复结果必相同。
+六、核心总结
+该模块是 “图驱动调度” 的可靠性保障，核心目标是让 dependency 边必为 DAG（否则拓扑排序失败）；
+通过 “找环→删弱边→迭代” 的确定性逻辑实现去环，全程保留 coupling 边不改动；
+提供详细的删边报告，且有兜底策略，既保证调度可用，又兼顾问题可追溯。

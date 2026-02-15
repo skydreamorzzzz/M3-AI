@@ -1,0 +1,36 @@
+核心作用
+该函数属于 eval 层的 aggregate 模块，仅对多次 refine 过程的 RunSummary 结果做批量统计汇总，生成整体评估指标（不参与推理 / 调度 / 图构建）。
+对外接口
+python
+运行
+aggregate_metrics(results: List[RunSummary]) -> Dict[str, float]
+输入
+results：多个 RunSummary 组成的列表（单个 RunSummary 对应一次完整 refine 结果），关键字段：
+final_pass: bool（最终是否成功）
+total_rounds: int（总轮次）
+conflict_count: int（冲突次数）
+oscillation_detected: bool（是否检测到振荡）
+protection_rate: float（保护率）
+输出
+返回包含整体指标的字典：
+字段	含义
+pass_rate	最终成功率
+avg_rounds	平均轮次
+conflict_rate	平均冲突次数
+oscillation_rate	振荡出现比例
+protection_rate	平均保护率
+数据流
+run_refine_loop → 生成单个 RunSummary → 多次运行得到列表 → 传入该函数 → 输出整体实验指标（用于对比实验、论文统计等）。
+函数逻辑（核心）
+空列表保护：若 results 为空，返回全 0 字典（防御式设计，避免除 0）；
+样本数 n = len(results)，所有指标均以 n 归一化；
+pass_rate：成功的 RunSummary 数量 /n；
+avg_rounds：所有 total_rounds 求和 /n；
+conflict_rate：所有 conflict_count 求和 /n（统计平均次数，非 “是否冲突”）；
+oscillation_rate：检测到振荡的 RunSummary 数量 /n；
+protection_rate：所有 protection_rate 求和 /n；
+所有字段转为 float（保证 JSON 序列化稳定，避免类型混淆）。
+总结
+函数核心是对多次 refine 结果做批量统计，输出 5 个核心评估指标；
+空列表保护是关键防御式设计，所有指标均基于样本数归一化；
+各指标计算逻辑不同（比例 / 平均值），且统一转为 float 保证类型稳定。

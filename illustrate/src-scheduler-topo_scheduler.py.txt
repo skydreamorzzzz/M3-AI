@@ -1,0 +1,84 @@
+一、文件核心定位
+该文件是纯拓扑排序调度器，核心逻辑可总结为：
+仅依据约束间的 “硬依赖（dependency）” 顺序修复约束；
+不考虑结构强度、耦合度，仅在断环时少量使用冲突风险；
+是 DagTopoScheduler 的 “简化版”，主打极致极简、依赖优先。
+二、核心特点（与 DagTopoScheduler 对比）
+特性	TopoScheduler（本调度器）	DagTopoScheduler
+仅使用 dependency 边	✅	✅
+用 coupling 打分排序	❌	✅
+用冲突风险打分排序	❌（仅断环时使用）	✅
+结构 tie-break 排序	❌	✅
+完全极简设计	✅	❌
+三、核心参数：TopoSchedulerParams
+参数仅聚焦 “依赖排序” 和 “断环逻辑”，控制调度核心行为：
+1. prefer_unpassed
+作用：控制是否优先排列未通过（失败）的约束；
+默认值：True；
+规则：
+✔️ True → 调度顺序为「未通过约束 + 已通过约束」，优先修失败项；
+❌ False → 完全按拓扑顺序，不区分约束状态。
+2. risk_weight_mode
+作用：断环时计算边权重的方式（决定删除哪条边）；
+可选值：
+"dst" → 基于目标节点的冲突风险计算权重；
+"avg" → 基于边两端节点的平均冲突风险计算权重。
+3. dependency_edge_type
+作用：限定仅对指定类型的边做拓扑排序；
+核心规则：只选取 edge.edge_type == "dependency" 的边；
+目的：彻底避免耦合（coupling）边被误用于拓扑排序。
+四、核心流程：schedule ()
+调度器核心入口方法，执行 6 步极简逻辑，保证依赖顺序合规：
+步骤 1：获取所有节点 ID
+调用 _get_node_ids(graph)，兼容多类输入格式：
+ConstraintGraph（约束图）；
+普通节点列表；
+纯字符串列表。
+步骤 2：提取 dependency 边
+调用 _get_dependency_edges(graph)，严格过滤边类型：
+若为 (u,v) 元组 → 默认判定为 dependency 边；
+若为 GraphEdge 对象 → 仅保留 edge_type == "dependency" 的边；
+核心保证：coupling 边永远不参与拓扑排序。
+步骤 3：边标准化
+调用 normalize_edges()，处理边数据：
+去重：删除重复的依赖边；
+过滤：剔除非法边（如自环、空节点边）。
+步骤 4：断环（保证 DAG 合法性）
+调用 break_cycles(...)，处理循环依赖：
+逻辑：若图存在循环，找到 “最弱边” 删除，直至变为有向无环图（DAG）；
+风险权重作用：仅在此处用 risk_weight 判断边的 “强弱”，决定删除哪条边。
+步骤 5：拓扑排序
+调用 topo_sort(...)，执行标准 Kahn 算法；
+兜底逻辑：若排序失败，直接回退为原始节点顺序。
+步骤 6：优先排列失败约束（可选）
+若 prefer_unpassed=True，将未通过的约束移至调度顺序最前端。
+五、断环逻辑（关键差异点）
+本调度器仅在 “断环阶段” 使用冲突风险（risk），核心规则：
+边权重计算：edge_weight(u,v) → 节点风险越高，对应边权重越大；
+删边规则：权重越小的边，越容易被删除；
+默认行为：优先删除 “目标节点风险低” 的边。
+六、解决的核心问题
+核心目标：确保约束修复顺序严格符合依赖结构，避免逻辑错误，例如：
+依赖链：OBJECT → COUNT → SPATIAL；
+保证：先修 OBJECT → 再修 COUNT → 最后修 SPATIAL；
+避免：修布局（SPATIAL）后改数量（COUNT）、修关系前对象（OBJECT）不存在等问题。
+七、不涉及的功能
+本调度器做极致简化，完全不执行以下复杂逻辑：
+不按结构出度排序；
+不按 coupling 强度排序；
+不用 conflict_risk 对约束降权；
+不进行任何复杂的分数计算。
+八、系统中的位置
+在 Refine loop 主循环（loop_core）中：
+loop_core → scheduler.schedule (...)（调用本调度器）→ 输出依赖安全的修复顺序 → 选取首个约束交给 Checker 修复。
+九、核心总结
+该调度器是极简、安全、仅关注 dependency 的拓扑调度器，适配场景：
+基线（baseline）对比实验；
+消融实验（ablation）；
+无结构评分的简化版本测试。
+十、系统调度器层级对比
+当前系统调度器体系从简单到复杂层级清晰：
+RandomScheduler → 无结构基线（随机排序）；
+TopoScheduler → 仅看依赖（本调度器）；
+DagTopoScheduler → 结构 + 耦合 + 冲突；
+ConflictAwareScheduler → 更复杂的冲突感知策略。

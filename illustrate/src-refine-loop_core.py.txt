@@ -1,0 +1,114 @@
+一、文件核心定位
+该文件是整个系统的核心编排器（Orchestrator），也是 refine 机制的 “发动机”，核心职责：
+串联四大核心模块：Scheduler（选约束）、Checker（判结果）、Editor（执行修改）、Verifier（核结果）；
+控制 “检查 → 修改 → 比较 → 更新” 的完整 refine 循环流程；
+核心定位总结：
+如果说 Checker 是评审、Editor 是执行者、Verifier 是裁判、Scheduler 是决策者，那么 loop_core 就是整个流程的 “总导演”。
+二、核心参数：LoopParams
+LoopParams 是控制循环行为的核心配置，参数说明如下：
+参数名	核心作用
+max_rounds	循环最大迭代次数（防止无限循环）
+early_stop	所有约束通过时是否提前停止循环（节省资源）
+record_pass_steps	是否记录 “约束已通过” 的轮次（便于溯源）
+accept_on_same	Verifier 判定为 same 时，是否接受候选版本
+三、核心函数与返回值
+核心函数
+run_refine_loop (...) —— 整个 refine 循环的入口函数
+返回值
+函数执行完成后返回三元组：
+(final_artifact, trace_steps, run_summary)
+final_artifact：循环结束后的最优 artifact 版本；
+trace_steps：所有轮次的 TraceStep 记录（完整执行轨迹）；
+run_summary：本次循环的汇总统计结果。
+四、初始化阶段（循环开始前）
+初始化阶段完成循环前的基础准备，共 3 步：
+步骤 1：读取 PromptItem
+PromptItem 包含循环的基础输入：
+prompt 文本（原始任务描述）；
+constraints（待校验的约束列表）；
+graph（约束图，可选）→ 若无则创建空图。
+步骤 2：初始化 best artifact
+若外部未提供初始 best artifact，则默认生成：
+artifact://{prompt_id}/init
+步骤 3：初始化约束状态
+骨架阶段默认所有 constraint 的状态为 False（假设全部未通过）。
+五、主循环逻辑
+循环主体：for t in range (max_rounds):
+每一轮循环执行以下核心步骤：
+Step 1：判断是否提前停止
+触发条件：
+所有约束已通过；
+early_stop=True；
+满足则直接 break，结束循环。
+Step 2：调度器选择待修复约束
+调用 scheduler.schedule (...) 生成约束修复优先级；
+选取优先级最高的约束：selected = order [0]；
+核心作用：由调度器决定本轮优先修复哪一个约束。
+Step 3：检查当前最优版本
+调用 checker.check_one (...) 检查当前 best artifact 是否满足选中的约束，返回 CheckResult：
+CheckResult (
+passed = 是否通过，
+reason = 判定原因，
+edit_instruction = 修复指令（未通过时生成）,
+confidence = 判定置信度
+)
+六、循环分支：两种核心情况
+根据 Checker 的判定结果，分为两种处理逻辑：
+✅ 情况 A：约束已通过（passed=True）
+直接更新状态：status_best = status_after_snapshot；
+不调用 Editor（无需修改）、不调用 Verifier（无需核验）；
+进入下一轮循环。
+❌ 情况 B：约束未通过（passed=False）
+按以下步骤执行：
+生成候选 artifact：
+若有 edit_instruction → 调用 editor.edit (best, instruction) 生成 candidate；
+若无 edit_instruction → candidate 保持与 best 一致；
+计算候选版本状态：
+生成 candidate 对应的约束状态：status_candidate；
+调用 Verifier 核验：
+decision = verifier.verify (...) → 返回结果为 better/worse/same；
+判定是否接受候选版本：
+接受条件（满足其一即可）：
+decision = better；
+decision = same 且 accept_on_same=True；
+✔️ 接受：更新 best = candidate，status_best = status_candidate；
+❌ 不接受：不更新，且 conflict_count += 1（冲突次数 + 1）。
+七、Trace 记录机制
+每一轮循环结束后，生成一条 TraceStep 记录，完整留存本轮执行轨迹：
+TraceStep 包含字段
+round_id：本轮轮次编号；
+selected_constraint：本轮选中的待修复约束；
+status_before：修改前的约束状态；
+status_after：修改后的约束状态；
+degraded_constraints：本轮被破坏的约束列表；
+improved_constraints：本轮被修复的约束列表；
+edit_instruction：本轮使用的编辑指令；
+accepted：候选版本是否被接受；
+关键统计逻辑
+degraded/improved 约束通过_diff_status (before, after) 函数计算：
+degraded_constraints：状态从 True 变为 False 的约束；
+improved_constraints：状态从 False 变为 True 的约束。
+八、循环结束后处理
+循环结束后，完成最终统计与结果封装：
+1. 核心统计
+final_pass：是否所有约束最终通过；
+total_rounds：实际执行的轮次；
+2. 生成 RunSummary
+RunSummary 包含本次循环的汇总信息：
+prompt_id：关联的任务 ID；
+total_rounds：总执行轮次；
+final_pass：是否最终通过；
+conflict_count：冲突次数；
+oscillation_detected：是否检测到振荡（占位）；
+protection_rate：保护率（占位）。
+九、系统架构（逻辑调用链）
+每一轮循环的模块调用顺序：
+Scheduler → Checker → Editor → Verifier → 更新 best → 记录 Trace → 下一轮
+十、关键设计思想
+单约束逐轮优化：每一轮仅处理一个约束，聚焦局部修复，降低多约束联动风险；
+保守更新策略：候选版本必须经过 Verifier 核验通过，才能替换 best 版本，防止 “修 A 破坏 B”；
+完全解耦设计：
+不依赖具体模型；
+不依赖特定图像类型；
+不依赖具体调度算法；
+所有模块可插拔替换，保证灵活性。

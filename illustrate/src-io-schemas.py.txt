@@ -1,0 +1,92 @@
+一、文件核心定位
+该文件是整个项目的统一数据结构定义层（Schema 层），核心价值与特性如下：
+核心作用：定义系统全流程的所有核心数据对象，是全项目的 “数据契约”；
+覆盖范围：约束、图结构、运行轨迹、任务总结、Prompt 封装等核心数据载体；
+模块特性：仅定义数据结构，不包含任何算法逻辑，所有业务模块均依赖此文件作为类型标准。
+二、核心数据结构总览
+以下是文件定义的核心数据结构，覆盖 “约束 - 图 - 运行 - 任务 - 统计” 全流程，层级清晰：
+类名	核心作用	所属层级
+ConstraintType	约束类型枚举，规范约束分类维度	约束层
+SpatialRelation	空间关系枚举，规范空间约束的关系表达	约束层
+Constraint	单条结构化约束，系统最核心的数据单位	约束层
+GraphEdge	约束图中的边结构，定义节点间关联关系	图层
+ConstraintGraph	约束图整体结构，封装节点与边的集合	图层
+TraceStep	单轮 refine 操作记录，记录单轮修改细节	运行轨迹层
+PromptItem	单次任务封装，作为 refine 流程的输入单位	任务封装层
+RunSummary	单次 refine 任务总结，汇总整体运行结果	实验统计层
+三、各数据结构详细说明
+1. ConstraintType（约束类型枚举）
+核心作用：统一约束类型的分类标准，避免跨模块类型表达歧义；
+核心枚举值：object（对象存在）、count（数量）、attribute（属性）、spatial（空间关系）、relation（逻辑关系）、text（文本内容）；
+应用场景：LLM 约束抽取、图建模、依赖关系分析。
+2. SpatialRelation（空间关系枚举）
+核心作用：规范 spatial 类型约束的关系表达，限制空间关系的取值范围；
+典型枚举值：left_of（在… 左侧）、above（在… 上方）、between（在… 之间）、inside（在… 内部）、stacked（堆叠）、aligned（对齐）；
+应用场景：约束结构化解析、空间类约束的标准化处理。
+3. Constraint（核心约束结构）
+核心作用：表示单条结构化约束，是系统最基础、最核心的数据单位；
+字段设计（分 “必选 / 可选”，清晰区分核心与扩展字段）：
+字段类型	字段名	说明
+必选	id	约束唯一编号
+必选	type	约束类型（关联 ConstraintType 枚举）
+必选	object	约束对应的主体对象
+可选	value	数量 / 属性值 / 文本内容（按需填充）
+可选	relation	空间关系（关联 SpatialRelation 枚举）
+可选	reference	约束参考的对象（如空间关系的对比对象）
+可选	confidence	LLM 抽取该约束的置信度
+4. GraphEdge（图边结构）
+核心作用：定义约束图中两个节点（约束）之间的关联关系；
+核心字段：
+字段名	说明
+source	起点约束的唯一 id
+target	终点约束的唯一 id
+edge_type	边类型（dependency / 耦合 /coupling/ 冲突 /conflict）
+weight	边的权重（用于图分析、边优先级判定）
+应用场景：DAG 构建、耦合指数分析、冲突检测。
+5. ConstraintGraph（约束图结构）
+核心作用：封装完整的约束图，整合节点与边的集合；
+核心组成：
+nodes：Constraint 列表（图的节点，即所有约束）；
+edges：GraphEdge 列表（图的边，即约束间的关联）；
+核心方法：get_adjacency() —— 返回 source→target 的邻接表，支撑图遍历、拓扑排序等操作。
+6. TraceStep（单轮 refine 记录）
+核心作用：记录 refine 循环中 “单轮操作” 的全量细节，是运行过程分析的基础；
+核心字段：
+字段名	说明
+round_id	本轮操作的轮次编号
+selected_constraint	本轮尝试修复的目标约束
+status_before	修改前所有约束的状态（True/False）
+status_after	修改后所有约束的状态（True/False）
+degraded_constraints	本轮被破坏的约束列表
+improved_constraints	本轮被修复的约束列表
+edit_instruction	本轮执行的编辑指令
+accepted	是否接受本轮的修改结果
+应用场景：振荡检测、约束保护率计算、运行过程统计分析。
+7. PromptItem（任务封装结构）
+核心作用：封装一次完整的 refine 任务，是流程的最小输入单位；
+核心字段：
+字段名	说明
+prompt_id	任务唯一标识
+text	原始 Prompt 文本
+constraints	从 Prompt 中抽取的 Constraint 列表
+graph	基于约束构建的 ConstraintGraph 约束图
+8. RunSummary（单次运行总结）
+核心作用：汇总一次完整 refine 任务的最终结果，是实验统计的核心载体；
+核心字段：
+字段名	说明
+prompt_id	关联的任务 id（对应 PromptItem）
+total_rounds	本次任务的总运行轮数
+final_pass	本次任务是否最终通过（整体约束达标）
+conflict_count	运行过程中发生的冲突次数
+oscillation_detected	是否检测到振荡现象
+protection_rate	本次任务的约束保护率
+应用场景：批量实验统计（aggregate）、分层统计（stratify）、实验结果对比。
+四、设计特点
+集中化定义：所有核心数据结构统一在此文件定义，避免分散导致的字段歧义；
+标准化命名：全流程字段命名规则一致，跨模块数据交互无理解成本；
+纯数据载体：仅定义结构和字段，无任何业务逻辑、无副作用；
+全局依赖：项目所有模块均依赖此文件作为类型标准，保证数据格式统一。
+五、核心总结
+该文件是 M3plus 项目的 “数据中枢”，定义了约束层、图层、运行轨迹层、实验统计层的所有核心数据结构；
+作为全项目的 “数据契约”，所有算法、调度、分析流程均围绕这些结构化数据展开；
+纯数据定义特性保证了模块间的解耦，同时标准化的结构让跨模块数据交互更高效。

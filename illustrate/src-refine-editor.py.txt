@@ -1,0 +1,106 @@
+一、文件核心定位
+该文件是 refine 循环中的编辑执行器（Editor），核心职责与设计目标如下：
+核心职责：
+接收 Checker 生成的 edit_instruction（编辑指令）；
+对当前 artifact（图像 / 成果）执行编辑操作；
+生成新的 artifact（候选版本）。
+设计目标：
+不依赖具体图像编辑模型，适配不同后端；
+支持 dry-run（空跑）模式，无模型也能运行；
+支持可插拔的真实编辑后端；
+保证编辑行为的可追踪性与可复现性。
+二、核心数据结构
+1. ArtifactHandle（工件包装器）
+用于统一包装任意类型的 artifact，解耦具体工件格式：
+payload：不透明对象（可存储图像路径 / URL / 字节数据 / ID 等）；
+meta：元数据字典（记录版本来源、编辑指令等追踪信息）；
+核心特点：
+不强绑定图像格式，适配任意工件类型；
+辅助方法：to_debug_str ()（生成调试用字符串）。
+2. EditBackend（编辑后端协议 / 接口）
+可插拔的编辑后端接口，定义统一规范：
+必须实现方法：apply (artifact, edit_instruction) → ArtifactHandle
+支持接入的真实编辑模型示例：
+✅ Qwen-Image-Edit
+✅ SDXL inpaint
+✅ 自定义 diffusion pipeline
+3. EditorParams（可调参数）
+通过参数控制 Editor 行为，参数说明如下：
+参数名	核心作用
+dry_run	是否执行真实编辑（True = 空跑，False = 真实执行）
+max_instruction_chars	编辑指令长度上限，超长时自动截断
+attach_instruction_to_meta	是否将编辑指令记录到新 artifact 的 meta 中
+attach_parent_to_meta	是否将父版本信息记录到新 artifact 的 meta 中
+三、核心方法：Editor.edit (artifact, edit_instruction)
+该方法是编辑执行的核心入口，执行逻辑分两步：
+第一步：指令预处理
+去除指令首尾空格（strip）；
+若指令长度超过 max_instruction_chars，自动截断至上限。
+第二步：判断执行模式
+真实执行模式（满足以下条件）：
+dry_run == False AND backend != None
+→ 调用 backend.apply (artifact, edit_instruction) 生成新 artifact；
+空跑模式（dry-run）：
+不满足上述条件 → 进入 dry-run 模式，仅生成新 ArtifactHandle，不修改实际工件。
+四、Dry-run 模式逻辑
+dry-run 模式核心是 “不修改工件，仅记录版本信息”，保证流程可追踪、可复现：
+1. 生成父版本指纹（_fingerprint_artifact ()）
+指纹生成来源：
+payload 的字符串 / 类型名；
+meta 的稳定 JSON 序列化结果；
+输出：16 位 SHA256 哈希值（截断后的唯一标识）。
+2. 更新新 ArtifactHandle 的 meta 信息
+新增 / 更新的核心字段：
+字段名	核心作用
+parent_fp	父版本 artifact 的指纹（溯源用）
+last_edit_instruction	本次执行的编辑指令（完整 / 截断后）
+edited_at_unix	编辑执行时间戳（Unix 时间）
+edit_id	本次编辑的唯一 ID（保证可复现）
+3. edit_id 生成规则
+计算公式：hash (parent_fp + "|" + instruction)
+核心保证：
+同一父版本 + 同一编辑指令 → 生成相同 edit_id；
+不依赖时间等随机因素，完全可复现。
+五、可复现性机制
+通过以下技术保证编辑行为与版本的可复现、可追踪：
+稳定 JSON：对 meta 等数据做有序 JSON 序列化，避免字段顺序导致的哈希差异；
+SHA256 哈希：生成唯一、稳定的指纹 / ID；
+16 位截断：在保证唯一性的前提下，简化标识，便于使用；
+实现效果：
+版本溯源：可通过 meta 追踪每个 artifact 的父版本与编辑指令；
+测试稳定：单元测试中相同输入可生成相同结果；
+轨迹可比：不同运行的 edit trace 可直接对比。
+六、系统中的位置
+Editor 是 refine 循环的 “版本演化器”，典型调用链：
+Checker（生成 edit_instruction）
+↓
+Editor.edit（执行编辑，生成新 ArtifactHandle）
+↓
+Verifier.compare（对比新旧版本 artifact）
+七、真实模型接入方式
+接入自定义图像编辑模型只需两步：
+第一步：实现 EditBackend 接口
+class MyImageEditor(EditBackend):
+    def apply(self, artifact, edit_instruction):
+        # 1. 调用自定义图像编辑模型，基于原artifact生成新图像
+        # 2. 构造新的ArtifactHandle
+        new_payload = "新图像的路径/URL/字节数据"
+        new_meta = artifact.meta.copy()  # 继承并更新meta
+        return ArtifactHandle(payload=new_payload, meta=new_meta)
+第二步：初始化 Editor 并启用真实编辑
+editor = Editor(
+    dry_run=False,  # 关闭dry-run，执行真实编辑
+    backend=MyImageEditor()  # 接入自定义后端
+)
+八、设计哲学
+该模块的核心设计思想是 “抽象与解耦”：
+不关心 artifact 的具体类型（图像 / 文本 / 其他）；
+不关心编辑后端的具体模型（Qwen/SDXL/ 自定义）；
+只负责：封装编辑行为 + 管理版本信息 + 保证可追踪；
+核心目标：把 “编辑行为” 抽象成可追踪的版本转换过程。
+九、总结
+src/refine/editor.py 是 refine 机制中的版本生成器，核心价值：
+每次编辑生成一个新的 artifact 版本，版本间可溯源；
+每个版本的 meta 记录完整的编辑上下文（父版本、指令、时间等）；
+无模型时可通过 dry-run 模式运行，不影响流程；
+有模型时可无缝接入自定义编辑后端，适配不同场景。

@@ -1,0 +1,55 @@
+一、文件核心定位
+该文件归属建图层，核心功能是将 Planner 抽取的 Constraint（约束）列表转换为依赖关系图（Dependency-Relation Graph，DRG），模块特性与核心用途如下：
+模块特性：完全确定性算法（不调用 LLM），仅做结构化建图，无数据修改、无副作用；
+DRG 边的两类核心用途：
+dependency 边（硬依赖）：提供给拓扑排序调度器，指导 “先修上游、后修下游” 的修复顺序；
+coupling 边（软耦合）：仅用于分析场景（如耦合指数计算、分层统计），不应参与拓扑排序。
+二、对外接口
+1. 主接口（核心建图）
+函数名	输入参数	输出类型	核心作用
+build_drg	List[Constraint], Optional[DRGParams]	ConstraintGraph	将约束列表转换为 DRG 图
+输出结构说明：ConstraintGraph(nodes, edges)
+nodes：原始约束列表（所有 Constraint）；
+edges：GraphEdge 列表，每条边包含 edge_type（dependency/coupling）和 weight（权重）。
+2. 分析辅助接口（可选）
+函数名	输入参数	输出类型	核心作用
+split_edges	ConstraintGraph	(List[GraphEdge], List[GraphEdge])	拆分出 dependency 边和 coupling 边
+coupling_index	ConstraintGraph, lam	float	计算耦合强度指数
+三、核心实现思路
+整体建图流程分三步，逻辑清晰且聚焦结构化处理：
+步骤	核心操作	辅助函数 / 说明
+1	对象名轻量归一化	调用 _norm_obj()，提升抽取噪声鲁棒性
+2	建立 OBJECT 约束索引	调用 _index_object_constraints()，生成 object_name → OBJECT constraint_id 映射
+3	按规则添加两类边（dependency/coupling），并通过 seen 去重避免重复边	依据 DRGParams 开关控制规则启用
+四、核心规则与函数分解
+1. DRGParams（建图参数开关）
+作为参数集控制建图规则的启用 / 关闭，核心配置项：
+开关类：是否添加对象耦合 / 引用耦合、是否添加对象依赖 / 引用依赖、是否让 RELATION/SPATIAL 依赖 COUNT；
+权重类：依赖边 / 耦合边的权重（仅用于分析 / 排序，不影响逻辑正确性）。
+2. _norm_obj（对象名归一化函数）
+核心作用：对 object/reference 名称做保守归一化，减少 “cats vs cat”“Glass vs glass” 等小噪声；
+实现方式：
+去除空格 + 转小写；
+轻微处理末尾 “s”（避免过度归一化，如 glass 不会被错误处理为 glas）。
+3. build_drg（主建图函数）
+核心是按规则生成两类边，具体规则如下：
+A. dependency 边（硬依赖，用于拓扑排序）
+依赖规则	边形式示例	规则说明
+非 OBJECT 约束依赖其关联对象的 OBJECT 约束	OBJECT(obj) → constraint	基础规则，保证先修复 “对象存在”，再修复该对象的其他约束
+含 reference 的约束依赖 reference 对象的 OBJECT 约束	OBJECT(ref) → constraint	保证引用对象的 “存在性” 优先修复
+可选：RELATION/SPATIAL 约束依赖同对象的 COUNT 约束（开关控制）	COUNT(obj) → RELATION(obj)
+COUNT(obj) → SPATIAL(obj)	避免 “数量未稳定就修布局 / 关系” 导致返工
+⚠️ 注意：若 Planner 未抽取到 OBJECT 约束，模块不会凭空创建对象节点，对应依赖边自动跳过。
+B. coupling 边（软耦合，仅用于分析）
+耦合规则	边形式示例	规则说明
+同一 object 下的多个非 OBJECT 约束两两建立双向耦合边（默认启用）	A ↔ B	核心耦合规则，用于后续耦合指数计算、分层统计
+同一 reference 下的多个约束两两建立双向耦合边（开关控制）	A ↔ B	可选增强规则，丰富耦合分析维度
+⚠️ 关键提醒：耦合边默认不参与拓扑排序，否则双向边会天然形成环，导致调度异常。
+4. 分析辅助函数
+函数名	核心逻辑	用途
+split_edges	按 edge_type 将 ConstraintGraph 的 edges 拆分为 dependency 边列表 + coupling 边列表	方便单独统计两类边
+coupling_index	计算耦合强度指数：`CI =	E_dep	+ lam *	E_coupling	（	E	` 为边的数量）	为 stratify 分桶分析提供依据
+五、核心总结
+该模块是 “图论调度” 机制的建图基础，核心是将约束列表结构化为 DRG 图；
+DRG 包含两类边：dependency 边（硬依赖，指导拓扑排序）、coupling 边（软耦合，仅用于分析）；
+模块具备确定性、规则可控（通过 DRGParams）、无副作用的特点，不依赖外部模型，仅做结构化处理。

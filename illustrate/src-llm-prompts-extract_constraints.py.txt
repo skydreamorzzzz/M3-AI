@@ -1,0 +1,63 @@
+一、文件核心定位
+该文件是系统的Planner / Checklist Planner 模块，作为整个 pipeline 的 “第一步”，核心作用与职责如下：
+核心目标：将用户原始自然语言 prompt 转换为结构化的 Constraint 列表，为后续建图、调度、refine 提供统一的输入基础；
+核心职责：
+构造标准化的 LLM 提示词（system + user）；
+调用 LLM 抽取视觉约束；
+容错解析 LLM 返回的 JSON 结果；
+完成约束的格式校验与类型转换。
+二、对外接口
+仅提供一个核心主函数，输入输出规则明确，具体如下：
+函数名	输入参数	输出类型	核心作用
+extract_constraints	client（LLM 客户端）、prompt_text（用户原始 prompt）、temperature（采样温度）	List[Constraint]	抽取并返回结构化的 Constraint 列表（类型定义来自 src/io/schemas.py）
+三、核心实现思路
+整体流程固定为 4 步，逻辑闭环且可复用，具体如下：
+步骤	核心操作	关键细节
+1	构造 LLM 对话消息（messages）	- SYSTEM_PROMPT：定义角色 + 输出格式（强制严格 JSON）；
+- USER_TEMPLATE：填充用户原始 prompt
+2	调用 LLM 接口抽取约束	- 任务标识：task="extract_constraints"；
+- temperature 默认 0（保证输出稳定，无随机性）
+3	容错解析 LLM 返回的 JSON	调用 _safe_parse_json，支持 “直接解析 + 正则截取 JSON 块” 两级容错
+4	转换并校验约束	调用 _parse_constraint，将 JSON 中的 dict 转为 Constraint 数据类，并做枚举类型校验
+四、提示词与输出格式约束
+1. SYSTEM_PROMPT 核心约束（强制要求）
+为保证 LLM 输出规范，系统提示词明确以下要求：
+抽取范围：覆盖用户 prompt 中的显式 + 隐式视觉约束；
+输出格式：仅返回 STRICT JSON，禁止解释性文字、markdown 格式；
+类型约束：约束类型必须来自指定枚举（OBJECT/COUNT/ATTRIBUTE/SPATIAL/RELATION/TEXT）；
+字段约束：
+每条约束必须有唯一 id（格式如 C1/C2/C3...）；
+不适用的字段填充 null；
+confidence 字段取值范围 0~1（表示抽取置信度）。
+2. LLM 期望输出格式
+强制要求 LLM 返回包含 constraints 数组的 JSON 结构，示例如下：
+json
+{
+  "constraints": [
+    {
+      "id": "C1",
+      "type": "OBJECT",
+      "object": "cat",
+      "confidence": 0.95,
+      "value": null,
+      "relation": null,
+      "reference": null
+    }
+  ]
+}
+必选字段（每条约束）：id、type、object、confidence；
+可选字段：value、relation、reference（不适用则填 null）。
+五、关键函数说明
+函数名	核心作用	关键实现细节
+extract_constraints	模块主入口，统筹完成约束抽取全流程	1. 若解析结果缺少 "constraints" 字段直接报错（保障下游输入稳定）；
+2. 每条约束均通过 _parse_constraint 做类型校验
+_safe_parse_json	容错解析 LLM 输出的 JSON	1. 优先直接 json.loads 解析；
+2. 失败则用正则抓取 {...} JSON 块再解析；
+3. 仍失败则抛异常（明确暴露解析失败问题）
+_parse_constraint	将 JSON dict 转换为 Constraint 数据结构	1. 强校验：ConstraintType[obj["type"]] 确保类型是合法枚举；
+2. 其余字段用 get() 读取（允许缺省）；
+3. confidence 缺省时默认赋值 1.0
+六、核心总结
+该模块是整个 pipeline 的 “数据入口”，核心完成 “自然语言 prompt → 结构化 Constraint 列表” 的转换；
+通过 “严格的提示词约束 + 容错的 JSON 解析 + 强制的类型校验” 三重保障，确保输出给下游（建图 / 调度 /refine）的约束结构稳定；
+核心设计目标是 “稳定性优先”（temperature 默认 0），避免因输入结构化不足导致下游模块异常。

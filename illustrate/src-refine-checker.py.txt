@@ -1,0 +1,87 @@
+一、文件核心定位
+该文件是 refine 循环中的单约束检查器（Checker） + 隐式指令生成器（Refiner），核心职责与特点如下：
+核心职责：
+判断当前 artifact（图像 / 成果）是否满足 “单条” Constraint（约束）；
+若约束不满足，生成可执行的 edit_instruction（编辑指令）。
+核心特点：
+支持真实 VLM 后端调用；
+支持 oracle 模式（单元测试专用）；
+支持无模型的占位运行（骨架测试）；
+内置模板型编辑指令生成逻辑，无模型时兜底。
+二、对外接口
+该文件对外暴露 “数据结构 + 插件接口 + 核心类” 三类接口，职责清晰：
+1. 数据结构
+类名	核心作用	字段名	字段说明
+CheckResult	封装单次检查结果	passed	布尔值，是否满足该约束
+reason	判定结果的简短说明
+edit_instruction	约束不满足时的编辑指令
+confidence	判定结果的置信度（0~1）
+2. 插件接口（可插拔判定后端）
+类名	核心作用	必须实现的方法
+JudgeBackend	可插拔的判定接口规范	judge(prompt_text, artifact, constraint) → CheckResult
+3. 核心类
+类名	核心作用	核心方法	方法作用
+Checker	单约束主检查器	check_one	执行单条约束的检查与指令生成
+三、统一执行逻辑
+Checker.check_one 方法的执行优先级顺序（从高到低）：
+若配置了 JudgeBackend 后端 → 调用 backend.judge () 获取 CheckResult；
+若未配置后端但有 oracle_status（测试真值）→ 使用 oracle_status 判定；
+若均无配置 → 执行占位逻辑：判定为 FAIL + 生成模板型编辑指令。
+四、低置信度处理策略（CheckerParams）
+通过可调参数控制低置信度判定结果的处理方式，参数说明如下：
+参数名	核心作用
+require_confidence	置信度阈值，判定结果置信度低于该值时触发策略
+low_confidence_policy	低置信度处理策略，可选值：treat_as_fail /skip/warn
+always_generate_instruction_on_fail	失败时是否强制生成编辑指令
+策略说明：
+skip：低置信度时直接判定为 “通过”，跳过检查；
+warn：判定为 “通过”，但在 reason 中附加警告说明；
+treat_as_fail：按正常流程判定为 “失败”，执行后续指令生成。
+五、模板型指令生成逻辑（_mk_instruction）
+无真实 LLM 指令生成器时的兜底逻辑，按 ConstraintType 分类生成简短、局部化的编辑指令：
+ConstraintType（约束类型）	生成逻辑
+OBJECT	生成 “Add missing object: [对象名]” 类指令
+COUNT	生成 “调整数量至 [目标值]” 类指令
+ATTRIBUTE	生成 “修改 [对象] 的 [属性] 为 [目标值]” 类指令
+SPATIAL	生成 “将 [对象] 重新定位至 [空间位置]” 类指令
+RELATION	生成 “修改 [对象 1] 与 [对象 2] 的语义关系” 类指令
+TEXT	生成 “修改 [文本区域] 的内容为 [目标文本]” 类指令
+生成原则：
+指令必须简短、可执行；
+仅做局部修改，不改动其他正确元素；
+不引入额外信息，仅聚焦当前约束修复。
+六、三种运行模式
+1. 真实 VLM 模式（常规运行）
+触发条件：backend != None
+执行逻辑：
+委托配置的 JudgeBackend（如 LLMJudgeBackend）执行判定；
+若判定为 fail 且后端未返回编辑指令 → 自动用模板指令补上。
+2. Oracle 模式（单元测试专用）
+触发条件：oracle_status != None
+执行逻辑：
+直接使用 oracle_status [constraint.id] 作为判定真值；
+不调用任何模型，结果完全可控，适配单元测试。
+3. 占位模式（无模型 / 骨架测试）
+触发条件：无 backend、无 oracle_status
+执行逻辑：
+默认判定所有约束为 FAIL；
+调用模板逻辑生成编辑指令；
+用于骨架流程测试，无需依赖模型即可跑通 refine 循环。
+七、系统中的位置
+该模块是 refine 循环的 “单点判断层”，典型调用链：
+run_refine_loop（refine 主循环）
+↓
+Checker.check_one（单约束检查）
+↓
+(可选) LLMJudgeBackend.judge（VLM 后端判定）
+八、设计特点
+强解耦：不依赖具体模型后端，通过 JudgeBackend 接口适配不同实现；
+测试友好：支持 Oracle 模式，便于单元测试与结果验证；
+骨架兼容：支持占位模式，无模型时也能跑通全流程；
+可插拔：后端可灵活替换（如 VLM / 本地逻辑 /mock）；
+指令稳定：模板指令逻辑固定，保证无模型时输出一致。
+九、总结
+该文件是 refine 循环中的单约束判定与修复生成器，是 refine 机制最核心的 “局部判断层”，核心价值：
+精准判定单条约束是否满足；
+约束失败时生成可执行的局部修复指令；
+适配多种运行场景（真实模型 / 测试 / 骨架），保证 refine 循环稳定运行。

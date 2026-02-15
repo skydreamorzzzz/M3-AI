@@ -1,0 +1,57 @@
+一、文件核心定位
+该文件是 Refinement Loop 的质量裁判，核心职责与目标如下：
+核心作用：对比「上一轮最优 artifact（best）」与「新生成候选 artifact（candidate）」，输出标准化决策结果；
+决策结果：仅返回三种固定值 → "better" / "worse" / "same"；
+核心目标：防止 “修一个约束，破坏两个约束” 的退化问题（Regression），守住版本质量底线。
+二、对外接口
+核心类
+Verifier —— 质量核验的核心类，封装所有对比逻辑
+核心方法
+verify (...) —— 执行两版本 artifact 的对比判定
+返回值
+Decision（固定枚举值）：严格限定为 "better" | "worse" | "same"
+三、三种工作模式
+通过 VerifierParams.mode 参数控制运行模式，默认使用保守策略：
+模式名	核心说明
+status_only	仅通过 “约束通过状态” 对比判定，不依赖视觉 / 语言模型，纯逻辑判断
+backend	调用外部 VLM/LLM 后端（VerifyBackend）判定，支持视觉 / 语义多维度对比
+conservative	优先用状态对比，状态信息不足时返回 "same"（默认模式，保守优先）
+四、核心比较逻辑（无视觉版本）
+status_only/conservative 模式下，基于 “约束通过状态” 对比，核心看两个指标：
+1. 主指标：失败约束数量
+通过 _count_failed (status) 函数统计状态为 False 的约束数量：
+candidate 失败数 <best 失败数 → 初步判定 “更优”，进入次指标校验；
+candidate 失败数 > best 失败数 → 直接判定 "worse"；
+candidate 失败数 = best 失败数 → 进入次指标校验。
+2. 次指标：是否出现约束回退（新破坏）
+通过 _newly_broken (before, after) 函数统计：原本 PASS（True）→ 现在 FAIL（False）的约束数量；
+若开启 prefer_non_regression = True（默认开启），执行以下规则：
+即使 candidate 失败数更少，但有新破坏 → 放弃 “更优” 判定；
+失败数相同时，有新破坏 → 判定 "worse"。
+五、决策规则总结
+（prefer_non_regression=True 时的最终判定规则）
+对比场景	最终决策结果
+candidate 失败数更少 + 无新破坏的约束	better
+candidate 失败数更少 + 有新破坏的约束	same
+candidate 失败数更多	worse
+失败数相同 + 有新破坏的约束	worse
+失败数相同 + 无任何约束状态变化	same
+缺少约束状态信息（无法对比）	same
+六、Backend 可插拔机制
+触发条件
+VerifierParams.mode = "backend"；
+已配置 VerifyBackend 实现类。
+核心逻辑
+调用 backend.compare (best_artifact, candidate_artifact, prompt_text) 获取决策结果。
+适用场景
+VLM 视觉对比（图文结合判定图像质量）；
+多维度语义判断（超越纯约束状态的综合评估）；
+接入人类打分系统（线下人工核验）。
+七、设计理念
+默认可脱离视觉运行：无需模型 / 图像，仅通过约束状态就能完成基础判定；
+保守原则优先：不轻易判定 "better"，避免因修复引入新问题；
+不轻易替换 best：只有明确 “更好” 时才更新最优版本；
+支持纯状态模拟：适合调度器等模块的独立实验，无需依赖真实图像 / 模型。
+八、系统中的位置
+Verifier 是 Refinement Loop 中 “更新 best 版本的最后一道防线”，在 loop_core 中的调用链：
+Checker（生成编辑指令）→ Editor（生成候选版本）→ Verifier（核验版本）→ 更新 best 版本

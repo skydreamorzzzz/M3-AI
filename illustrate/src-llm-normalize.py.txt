@@ -1,0 +1,85 @@
+一、文件核心定位
+该文件是 LLM 输出结构的 “标准化层”，核心作用与特点如下：
+核心作用：
+对 Planner 抽取的 Constraint（约束）进行清洗与规范化；
+将 LLM “随意表达” 的内容映射到系统 “受控枚举”；
+保证图构建、调度阶段的输入稳定一致。
+重要特点：
+不调用 LLM，纯本地逻辑处理；
+完全确定性，输入相同则输出必然相同；
+保守处理原则：不猜测、不臆造内容，无法规范时保留原值。
+二、对外接口
+该文件提供 5 个核心规范化函数，覆盖约束各维度的清洗：
+函数名	核心作用
+normalize_color	规范颜色表达（如同义词映射、统一表述）
+normalize_relation	规范空间关系（映射到 SpatialRelation 枚举）
+normalize_object	规范对象名称（统一格式，保证名称一致性）
+normalize_text_value	规范 TEXT 类型约束的文本内容
+normalize_constraint	对整条 Constraint 做统一规范化（核心入口）
+三、统一实现思路
+所有规范化函数遵循 “先清洗、后映射、保守兜底” 的固定策略：
+第一步：基础清洗（所有字段通用）
+转为小写（文本内容除外）；
+去除多余空格（合并连续空格、首尾空格）；
+去除字段外层引号；
+第二步：类型化映射
+根据字段类型，将清洗后的内容映射到系统 “受控词表 / 枚举”；
+第三步：保守兜底
+若无法确定映射关系（无匹配的受控词），则保留 “清洗后的原值”；
+设计原则：宁可保留原值，也不错误归类，避免引入新错误。
+四、核心规则说明
+1. normalize_color（颜色规范）
+支持的规范化规则：
+映射到受控颜色集合（如 red /blue/green 等）；
+同义词映射（如 navy → blue、light blue/sky blue → blue）；
+保留 hex/rgb 格式（如 #FF0000、rgb (255,0,0) 不做修改）；
+兜底规则：
+无法识别的颜色表达 → 返回清洗后的原字符串。
+2. normalize_relation（空间关系规范）
+核心目标：
+将各种自然语言表达映射到 SpatialRelation.value 枚举值；
+示例映射：
+"to the left of" → left_of；
+"on top of" → above；
+"beneath" → below；
+特殊处理：
+若输入已是合法的枚举值 → 直接返回；
+无法匹配枚举 → 返回清洗后的原值。
+3. normalize_object（对象名规范）
+核心规则：
+转为小写；
+去除标点符号；
+合并多余空格；
+保守单数化：仅去掉末尾的 s（避免破坏 glasses、pants 等特殊名词）；
+核心目的：
+保证同一对象的名称表达一致（如 "Cat" → "cat"、"dogs" → "dog"），便于后续建图。
+4. normalize_text_value（文本内容规范）
+仅用于 TEXT 类型约束的 value 字段，规则：
+去除外层引号；
+合并多余空格；
+保留大小写（文本渲染通常对大小写敏感）；
+示例：
+输入 ""Hello World!"" → 输出 "Hello World!"。
+5. normalize_constraint（统一规范化入口）
+对单条 Constraint 做全字段规范化，是上层调用的核心入口，处理逻辑：
+object 字段 → 调用 normalize_object；
+relation 字段 → 仅 SPATIAL/RELATION 类型调用 normalize_relation；
+value 字段（按类型处理）：
+TEXT 类型 → 调用 normalize_text_value；
+ATTRIBUTE 类型 → 尝试调用 normalize_color；
+COUNT 类型 → 清洗数字字符串（去空格、非数字字符）；
+reference 字段 → 调用 normalize_object；
+输出特点：
+返回新的 Constraint 对象（通过 dataclass replace 实现），不修改原始对象，保证不可变。
+五、设计特点
+不可变风格：不修改原始 Constraint 对象，规范化后返回新对象；
+低侵入性：可灵活插入在 Planner 之后、建图之前的流程中；
+无新增字段：仅规范化已有字段，不引入新字段或数据；
+无猜测逻辑：无法确定的内容保留原值，不主观归类；
+完全确定性：输入相同，规范化结果必然相同。
+六、总结
+该文件是 “LLM 输出 → 结构化图建模” 之间的关键缓冲层，核心价值：
+降低 LLM 输出的随机性噪声，统一表达格式；
+提高图构建阶段的稳定性，减少因表达不一致导致的错误；
+保证实验可复现性（完全确定性处理）；
+它是整个系统稳定性的重要基础组件，为后续建图、调度提供干净、统一的 Constraint 输入

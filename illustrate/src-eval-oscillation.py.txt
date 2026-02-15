@@ -1,0 +1,53 @@
+一、文件核心定位
+该文件归属实验评估层，核心功能是从 refine 过程生成的 TraceStep 列表中，检测是否出现 “振荡现象”。
+作为纯分析模块，具备以下特性：
+不参与调度、编辑等业务逻辑
+不调用大语言模型（LLM）
+仅读取 Trace 数据做结构化分析，无任何数据修改行为
+二、振荡类型定义
+文件聚焦检测两类振荡现象，核心特征如下：
+振荡类型	核心定义	典型表现
+自振荡（Self Oscillation）	单个约束在多次修复过程中状态反复翻转	同一约束状态出现 True→False→True 或 False→True→False（修好又被破坏，循环往复）
+交叉振荡（Cross Oscillation）	两个约束互相破坏，形成 “打架” 的双向破坏关系	修约束 A 会破坏 B，修约束 B 又会破坏 A（A↔B 双向破坏）
+三、对外接口
+1. 数据结构：OscillationResult
+该结构封装振荡检测的完整结果，字段说明如下：
+字段名	含义
+has_oscillation	是否存在任意类型的振荡（自振荡 / 交叉振荡）
+self_oscillation	是否存在自振荡
+cross_oscillation	是否存在交叉振荡
+top_pairs	最可疑的互相破坏约束对（按破坏次数排序）
+pair_counts	记录所有有向破坏关系的次数（如 A→B 的破坏次数）
+2. 主函数：detect_oscillation
+python
+运行
+detect_oscillation(trace: List[TraceStep], min_pair_support=1) -> OscillationResult
+输入：refine 过程产生的 TraceStep 列表；min_pair_support 为交叉振荡判定的次数阈值（默认 1）
+输出：结构化的 OscillationResult 对象
+四、核心实现思路
+1. 自振荡检测逻辑
+核心目标：识别单个约束的状态反复翻转
+步骤拆解：
+按约束（constraint）维度对 TraceStep 数据分组；
+记录每个约束每次被修复后的状态；
+检查是否出现 “三连翻转模式”：若连续三次状态满足 a ≠ b 且 a = c，则判定为自振荡。
+2. 交叉振荡检测逻辑
+核心目标：识别两个约束间的双向互相破坏关系
+步骤拆解：
+遍历所有 TraceStep，统计有向破坏事件：若 “修复 A 时破坏了 B”，则记录一次 A→B；
+筛选满足双向破坏的约束对：若同时存在 A→B 和 B→A，且次数达到 min_pair_support 阈值；
+判定该约束对存在交叉振荡，并按破坏次数排序输出 top_pairs。
+五、关键函数说明
+函数名	核心作用	实现方法
+_detect_self_oscillation	检测单个约束是否出现自振荡	记录约束每次被选中后的状态，查找 “三连翻转模式”
+_detect_cross_oscillation	检测是否存在交叉振荡的约束对	统计所有 A→B 有向破坏次数，筛选双向破坏对并按支持度排序
+detect_oscillation	振荡检测统一入口	整合上述两个检测函数，输出结构化的 OscillationResult 结果
+六、设计特点
+算法完全确定性：无随机逻辑，输入相同则输出必相同；
+无模型依赖：不调用任何 AI 模型，仅基于数据结构分析；
+纯只读分析：仅读取 TraceStep 数据，不修改任何原始数据；
+结构化分析：聚焦 TraceStep 中的状态变化和退化记录，无主观判定。
+七、核心总结
+该文件专注于 refine 过程的振荡问题检测，核心覆盖自振荡（单约束状态反复）和交叉振荡（双约束互相破坏）两类场景；
+基于 TraceStep 数据的结构化分析实现检测，算法确定、无模型依赖；
+输出结构化的 OscillationResult，清晰呈现振荡类型、可疑约束对等关键信息。

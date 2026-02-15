@@ -1,0 +1,22 @@
+一、文件核心定位
+该文件是实验统计层的基础函数集合，核心作用是从多次运行生成的 RunSummary 列表中，计算单一维度的统计指标；仅做纯统计计算，无任何副作用（不修改原始数据、不参与数据加工）。
+二、对外接口
+提供 3 个独立的统计函数，输入输出规则完全统一：
+函数名	输入参数	输出类型
+pass_rate	List[RunSummary]	float
+avg_rounds	List[RunSummary]	float
+conflict_rate	List[RunSummary]	float
+三、统一实现思路
+所有函数遵循极简且一致的逻辑：
+空值防御：若输入的 RunSummary 列表为空，直接返回 0（避免除零错误）；
+指标计算：对目标字段做汇总后，除以列表总样本数，得到平均值 / 比例值；
+纯统计特性：仅读取数据做计算，不修改任何原始数据。
+四、各函数详情
+函数名	核心作用	具体计算方式
+pass_rate	计算最终成功比例	统计列表中 final_pass=True 的 RunSummary 数量 → 除以列表总长度
+avg_rounds	计算平均运行轮数	累加列表中所有 RunSummary 的 total_rounds 字段值 → 除以列表总长度
+conflict_rate	计算平均冲突次数	累加列表中所有 RunSummary 的 conflict_count 字段值 → 除以列表总长度
+总结
+该文件聚焦单一维度统计，封装了 3 个基础统计函数，逻辑高度统一；
+所有函数均包含空值保护，仅做 “字段汇总 / 总样本数” 的简单计算；
+纯只读统计特性，无数据修改、无副作用，仅完成 RunSummary 列表到单一指标的转换。

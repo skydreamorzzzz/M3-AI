@@ -1,0 +1,72 @@
+一、文件核心定位
+该文件是系统的单约束视觉判定器，作为 Checker 模块的 LLM/VLM 后端实现，属于 refine 循环的 “判定层”，核心作用如下：
+输入：原始 prompt、当前图像 artifact、单条 constraint（约束）；
+核心目标：让视觉模型判定 “当前图像是否满足该约束”，若不满足则生成最细粒度的局部编辑指令；
+特性：聚焦 “单点约束判断”，不涉及多约束联动，是 refine 流程中 “感知判断” 的核心载体。
+二、对外接口
+核心封装为一个类，提供唯一核心判定方法，输入输出规则明确：
+1. 核心类与方法
+类名	核心作用	方法名	输入参数	输出类型	方法作用
+LLMJudgeBackend	LLM/VLM 判定后端实现	judge	prompt_text（原始提示）、artifact（图像）、constraint（单条约束）	CheckResult	判定图像是否满足约束，返回结构化判定结果
+2. 输出类型说明
+CheckResult（定义来自 refine.checker）：封装判定结果的结构化数据，包含是否通过、失败原因、编辑指令、置信度等核心字段。
+三、核心实现思路
+整体流程固定为 5 步，逻辑闭环且聚焦单点判定，具体如下：
+约束结构化：将输入的 constraint 转换为 dict 格式，便于 LLM 解析；
+提示词构造：拼接 SYSTEM_PROMPT（规则约束） + USER_TEMPLATE（上下文信息）；
+模型调用：调用 LLMClient.chat() 接口，传入图像和提示词；
+JSON 解析：通过 _safe_parse_json 容错解析 LLM 返回的 JSON 结果；
+结果转换：将解析后的 JSON 转为 CheckResult 结构体并返回。
+四、提示词设计逻辑
+提示词设计严格聚焦 “单约束判定”，避免模型偏离核心目标，具体规则如下：
+提示词类型	核心约束 / 提供内容	设计目标
+SYSTEM_PROMPT	强制规则：
+1. 仅检查单条 constraint，不关联其他约束；
+2. 满足则 passed=true，不满足则 passed=false；
+3. 不满足时必须生成局部 edit_instruction；
+4. 仅输出严格 JSON，无多余文本	让模型成为 “严格的单点检查员”，聚焦当前约束
+USER_TEMPLATE	提供核心上下文：
+1. 原始 prompt 文本；
+2. 待检查的 constraint（结构化 JSON 格式）；
+⚠️ 不传入其他约束，保证 “单点判断”	让模型精准聚焦当前约束，避免干扰
+五、judge 方法详细说明
+1. 输入参数拆解
+参数名	具体内容
+prompt_text	用户原始自然语言描述（任务基准）
+artifact.payload	图像的路径 / URL（视觉判定的目标对象）
+constraint	待检查的单条约束（结构化 Constraint 对象）
+2. 关键模型调用
+self.client.chat(
+    task="judge_constraint",  # 任务标识，明确判定场景
+    messages=messages,        # 构造好的 system + user 提示词
+    images=[artifact.payload] # 传入图像，使用视觉模型判定
+)
+核心特点：基于视觉模型（VLM）实现 “图文结合” 的约束判定，而非纯文本推理。
+3. 输出转换
+将 LLM 返回的 JSON 结果，映射为 CheckResult 结构体：
+CheckResult(
+    passed=解析后的是否通过,       # bool，核心判定结果
+    reason=解析后的失败原因,       # str，判定依据
+    edit_instruction=局部编辑指令, # str，失败时的修复指令
+    confidence=判定置信度          # float，0~1 区间
+)
+输出结果直接供 refine.loop_core 调用，驱动 refine 循环的下一步操作。
+六、JSON 容错解析
+通过 _safe_parse_json 函数提升模型输出不规范时的鲁棒性，解析逻辑分三级：
+优先尝试直接调用 json.loads 解析完整输出；
+若失败，用正则提取输出中的 {...} JSON 片段后重新解析；
+若仍失败，抛出明确异常（避免静默失败导致流程异常）；
+核心目的：解决模型偶尔输出解释性文本、破坏 JSON 格式的问题，保证解析稳定性。
+七、系统中的位置
+该模块是 refine 流程的核心感知层，上下游依赖关系清晰：
+LLMJudgeBackend（本文件） → Checker 模块 → run_refine_loop（refine 主循环）
+简单来说：它是 Checker 的 “判定大脑”，为 refine 循环提供每一轮的约束判定结果。
+八、设计特点
+单点聚焦：仅判定单条约束，避免多约束干扰，保证判定精准度；
+格式强约束：强制 JSON 输出，配合容错解析，保证结果可解析；
+视觉支持：支持传入图像路径 / URL，基于 VLM 实现图文结合判定；
+易替换：可直接替换为 mock 后端做 ablation 实验（对比有无该模块的效果）。
+九、核心总结
+该文件职责唯一且明确：判定 “当前图像是否满足单条约束”，失败时生成局部编辑指令；
+核心设计围绕 “单点判定” 展开，通过强提示词约束 + 容错解析保证结果稳定；
+作为 refine 流程的 “感知判断器”，是连接视觉输入与约束校验的核心桥梁。

@@ -1,0 +1,56 @@
+一、文件核心定位
+该文件归属实验分析层，核心功能是按「耦合指数（coupling_index）」将多次运行的 RunSummary 结果划分为 low/mid/high 三个分桶，仅承担分组统计职责：
+不参与调度、模型计算等核心业务流程；
+仅基于 coupling_index 对实验结果做分层，无数据修改行为；
+核心目标：分析不同耦合复杂度下系统表现的差异（如 “复杂图 vs 简单图” 的性能对比）。
+二、对外接口
+1. 数据结构：StratifyResult
+封装分桶后的完整结果，字段说明如下：
+字段名	含义
+thresholds	实际使用的分组阈值 (low_th, high_th)（手动指定 / 自动计算的最终值）
+groups	按 low/mid/high 分组后的 RunSummary 列表（字典形式：{"low": [...], "mid": [...], "high": [...]}）
+counts	每组的样本数量（字典形式：{"low": n1, "mid": n2, "high": n3}）
+2. 主函数：stratify_by_bucket
+def stratify_by_bucket(
+    results: List[RunSummary],
+    coupling_scores: Dict[str, float],
+    thresholds: Optional[Tuple[float, float]] = None,
+    quantiles: Tuple[float, float] = (0.33, 0.66),
+) -> StratifyResult:
+参数说明：
+参数名	类型	含义
+results	List[RunSummary]	待分组的运行结果列表
+coupling_scores	Dict[str, float]	映射关系：prompt_id → 对应的 coupling_index（耦合指数）
+thresholds	Optional[Tuple[float, float]]	可选，手动指定的分组阈值 (low_th, high_th)；未指定则自动计算
+quantiles	Tuple[float, float]	自动计算阈值的分位数（默认 (0.33, 0.66)，即 33%/66% 分位数）
+输出：结构化的 StratifyResult 对象。
+三、核心实现思路
+整体逻辑分三步，流程清晰且无复杂操作：
+步骤 1：收集有效耦合指数
+仅提取 results 中实际出现的 prompt_id 对应的 coupling_index 数值（过滤无关数据，保证分组针对性）。
+步骤 2：确定分组阈值
+若传入 thresholds（手动指定）：直接使用该 (low_th, high_th) 作为分组边界；
+若未指定 thresholds：基于步骤 1 收集的数值，按 quantiles 分位数自动计算 low_th（低阈值）、high_th（高阈值）。
+步骤 3：按阈值分桶
+对每个 RunSummary，根据其 prompt_id 对应的 coupling_index（记为 ci）划分分组：
+ci < low_th → 划入 low 组；
+low_th ≤ ci < high_th → 划入 mid 组；
+ci ≥ high_th → 划入 high 组。
+四、关键逻辑说明
+1. 分位数计算（核心细节）
+内部通过 _quantile 函数实现，特性如下：
+纯 Python 实现，不依赖 numpy 等第三方库；
+计算逻辑：先对耦合指数数值排序 → 线性插值得到指定分位数的阈值；
+保证跨环境可运行，无外部依赖。
+2. 分组规则（核心判定）
+每个 RunSummary 的分组唯一依赖：ci = coupling_scores[prompt_id]，按区间严格划分，无模糊判定。
+3. 返回内容设计
+返回「实际阈值 + 分组数据 + 样本数量」，既保留分组依据，又提供基础统计信息，便于后续分层统计、对比实验等分析操作。
+五、设计特点
+阈值灵活：支持手动指定阈值，也可按分位数自动计算（避免固定阈值导致的跨数据集失真）；
+纯统计分层：仅做分组操作，无数据修改、无业务逻辑依赖，无任何副作用；
+针对性强：仅基于 results 中实际出现的 prompt_id 收集耦合指数，避免无效数据干扰。
+六、核心总结
+该文件核心是按耦合复杂度对实验结果分层，输出 low/mid/high 三组结构化结果；
+阈值确定支持 “手动指定 / 自动分位数” 两种方式，适配不同分析场景；
+分组结果可直接用于分析 “不同耦合复杂度（复杂图 / 简单图）下系统表现的差异”，是实验分层分析的基础工具。

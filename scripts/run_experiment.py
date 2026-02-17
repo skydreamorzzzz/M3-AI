@@ -57,6 +57,9 @@ from src.refine.loop_core import run_refine_loop, LoopParams
 from src.scheduler.linear_scheduler import LinearScheduler
 from src.scheduler.dag_topo import DagTopoScheduler, DagTopoParams
 
+# ---------------- Eval ----------------
+from src.eval.aggregate import aggregate_metrics
+
 
 # ============================================================
 # Logging Helper
@@ -236,7 +239,8 @@ def main():
         "n_prompts": len(prompts),
         "backend": args.backend,
         "dry_run": bool(args.dry_run),
-        "results": {},
+        "max_rounds": args.max_rounds,
+        "strategies": {},
     }
 
     # ============================================================
@@ -258,6 +262,7 @@ def main():
 
         trace_rows: List[Dict[str, Any]] = []
         summary_rows: List[Dict[str, Any]] = []
+        summary_objects: List[RunSummary] = []  # Keep RunSummary objects for metrics
 
         for item_data in prompts:
 
@@ -339,6 +344,7 @@ def main():
                         trace_rows.append(t.__dict__)
 
                     summary_rows.append(summary.__dict__)
+                    summary_objects.append(summary)  # Keep object for metrics
                     
                     # Update global success count (only once per prompt, not per strategy)
                     if strategy_name == strategy_list[0]:
@@ -376,10 +382,57 @@ def main():
                 fieldnames=list(summary_rows[0].keys()),
             )
 
-        aggregate_all["results"][strategy_name] = {
-            "n_prompts": len(prompts)
+        # ---------------- Compute Strategy Metrics ----------------
+        n_completed = len(summary_objects)
+        n_failed = len([e for e in error_registry.errors if strategy_name == strategy_list[0]])  # Only count in first strategy
+        metrics = aggregate_metrics(summary_objects)
+
+        aggregate_all["strategies"][strategy_name] = {
+            "n_completed": n_completed,
+            "n_failed": n_failed if strategy_name == strategy_list[0] else 0,
+            "metrics": metrics,
         }
 
+        _log("METRICS", f"{strategy_name}: pass_rate={metrics['pass_rate']:.2%}, avg_rounds={metrics['avg_rounds']:.2f}")
+
+    # ---------------- Select Best Strategy ----------------
+    if aggregate_all["strategies"]:
+        # Sort by: 1) pass_rate desc, 2) avg_rounds asc, 3) conflict_rate asc
+        strategy_scores = []
+        for strat_name, strat_data in aggregate_all["strategies"].items():
+            m = strat_data["metrics"]
+            score = (
+                -m["pass_rate"],       # Negative for descending
+                m["avg_rounds"],       # Positive for ascending
+                m["conflict_rate"],    # Positive for ascending
+            )
+            strategy_scores.append((strat_name, score, m))
+        
+        strategy_scores.sort(key=lambda x: x[1])
+        
+        # Best strategy (first in sorted list)
+        best_strategy_name = strategy_scores[0][0]
+        best_metrics = strategy_scores[0][2]
+        
+        # Handle ties: keep all strategies with same score
+        best_score = strategy_scores[0][1]
+        best_candidates = [s[0] for s in strategy_scores if s[1] == best_score]
+        
+        # If tie, prefer the one that appears first in command-line order
+        if len(best_candidates) > 1:
+            for s in strategy_list:
+                if s in best_candidates:
+                    best_strategy_name = s
+                    break
+        
+        aggregate_all["best_strategy"] = {
+            "name": best_strategy_name,
+            "metrics": best_metrics,
+            "tied_with": best_candidates if len(best_candidates) > 1 else [],
+        }
+        
+        _log("BEST", f"Best strategy: {best_strategy_name} (pass_rate={best_metrics['pass_rate']:.2%})")
+    
     # ---------------- Final Aggregate ----------------
     (base_out / "aggregate.json").write_text(
         json.dumps(aggregate_all, ensure_ascii=False, indent=2),

@@ -114,6 +114,67 @@ Return STRICT JSON only.
 """.strip()
 
 
+SYSTEM_PROMPT_QUALITY = """
+You are an EXTREMELY STRICT image quality evaluator for scientific research and academic publications.
+
+Task:
+- Given the ORIGINAL prompt and ONE image:
+  rate the overall quality with PROFESSIONAL PUBLICATION STANDARDS.
+
+CRITICAL EVALUATION CRITERIA:
+1. **Precision**: Are measurements, counts, positions EXACT as specified?
+2. **Composition**: Is the layout clean, balanced, and aesthetically pleasing?
+3. **Detail Fidelity**: Are textures, colors, lighting realistic and high-resolution?
+4. **Text Quality**: Is text perfectly sharp, legible, and correctly positioned?
+5. **Spatial Accuracy**: Are spatial relationships (distances, angles, overlaps) precise?
+
+YOU MUST BE HARSH. Assume the image has flaws unless proven otherwise.
+
+Output STRICT JSON only. No markdown. No extra text.
+
+JSON format:
+{
+  "quality_score": 0.0-1.0,
+  "reason": "detailed explanation with specific issues",
+  "weaknesses": ["list", "each", "specific", "flaw", "separately"]
+}
+
+Scoring guideline (EXTREMELY STRICT):
+- 0.95-1.0: Perfect (ZERO flaws, indistinguishable from professional photography, publication-ready)
+- 0.85-0.95: Excellent (1-2 barely noticeable imperfections, requires close inspection to find)
+- 0.70-0.85: Good (3-5 minor issues: slightly imperfect spacing, minor lighting issues, small detail inaccuracies)
+- 0.50-0.70: Acceptable (multiple noticeable issues: imperfect alignment, suboptimal composition, minor missing details)
+- 0.30-0.50: Poor (significant issues: wrong proportions, messy layout, poor color balance, low resolution feel)
+- 0.0-0.30: Very poor (major defects: missing elements, severe distortions, unprofessional quality)
+
+MANDATORY PENALTIES (apply cumulatively):
+- Any imprecise spacing or alignment: -0.10
+- Imperfect text (blur, wrong font, misalignment): -0.15
+- Wrong count visible (even if off by 1): -0.25
+- Incorrect spatial relationship (wrong distance/angle): -0.15
+- Poor lighting or color balance: -0.10
+- Low resolution or blurry details: -0.15
+- Unnatural composition or awkward framing: -0.10
+- Any element looks AI-generated (not photorealistic): -0.10
+
+BASELINE STARTING SCORE: 0.60 (assume imperfect until proven otherwise).
+Adjust UP if image exceeds expectations, or DOWN for each flaw found.
+
+NEVER give 0.9+ unless the image is TRULY FLAWLESS at professional photography standards.
+""".strip()
+
+USER_TEMPLATE_QUALITY = """
+Original prompt:
+\"\"\"
+{prompt}
+\"\"\"
+
+Rate the overall quality of this image.
+
+Return STRICT JSON only.
+""".strip()
+
+
 # ============================================================
 # Backend Implementation
 # ============================================================
@@ -305,6 +366,68 @@ class LLMJudgeBackend(JudgeBackend):
             _p(f"print_first_results_error={e}")
 
         return out
+    
+    # -----------------------------
+    # Score image quality
+    # -----------------------------
+    def score_quality(
+        self,
+        prompt_text: str,
+        artifact: Any,
+    ) -> Dict[str, Any]:
+        """
+        Score overall image quality (0-1).
+        
+        Returns:
+            {
+                "quality_score": float,
+                "reason": str,
+                "weaknesses": List[str],
+            }
+        """
+        _p("========== score_quality ==========")
+        _p(f"model={getattr(self.client, 'model', None)} backend={getattr(self.client, 'backend', None)}")
+        _p(f"temperature={self.temperature}")
+        _p(f"prompt_len={len(prompt_text) if isinstance(prompt_text, str) else 'NA'}")
+        
+        img = _extract_image_handle(artifact)
+        _p(f"artifact_handle={img!r}")
+        
+        img_url = _to_image_url(img)
+        _p(f"img_url_prefix={img_url[:40]!r} (len={len(img_url)})")
+        
+        messages = [
+            {"role": "system", "content": SYSTEM_PROMPT_QUALITY},
+            {
+                "role": "user",
+                "content": USER_TEMPLATE_QUALITY.format(prompt=prompt_text),
+            },
+        ]
+        
+        _p("calling client.chat(task=score_quality)...")
+        raw = self.client.chat(
+            task="score_quality",
+            messages=messages,
+            params=LLMParams(temperature=self.temperature),
+            images=[img_url],
+        )
+        _p(f"raw_response={_truncate(raw, 1200)}")
+        
+        data = _safe_parse_json(raw)
+        _p(f"parsed_json={_truncate(data, 1200)}")
+        
+        # STRICT validation
+        quality_score = _require_float_01(data, "quality_score")
+        reason = _require_str(data, "reason")
+        weaknesses = data.get("weaknesses", [])
+        
+        _p(f"score_quality_result: quality={quality_score:.2f} reason={_truncate(reason, 240)}")
+        
+        return {
+            "quality_score": quality_score,
+            "reason": reason,
+            "weaknesses": weaknesses if isinstance(weaknesses, list) else [],
+        }
 
 
 # ============================================================

@@ -1,0 +1,15 @@
+[
+  {
+    "prompt_id": "complex_001_spatial_numerosity",
+    "text": "A realistic photo of a chess board on a wooden table. The chess board must contain: exactly 2 white pawns on the second row (columns B and G), exactly 3 black knights arranged in a diagonal line (columns C3, D4, E5), a red queen piece on E1, and a blue rook on H8. Behind the chess board, place exactly 5 identical coffee mugs forming a perfect horizontal line. The leftmost mug must partially occlude the chess board. A green LED clock displaying '10:45' must be visible on the right side of the table, and it must be horizontally aligned with the top edge of the chess board. The entire scene should be viewed from a 45-degree angle from the front-right."
+  },
+  {
+    "prompt_id": "complex_002_text_spatial_count",
+    "text": "A minimalist poster design on a white background. At the top center, render the exact text 'RESEARCH 2026' in bold Helvetica font (exact spelling required). Below the title, create exactly 3 columns of colored rectangles: left column has 4 blue rectangles vertically stacked with 2mm gaps, middle column has 5 red rectangles vertically stacked with 2mm gaps, right column has 3 green rectangles vertically stacked with 2mm gaps. Each rectangle must have the exact dimensions 30mm x 10mm. Below the rectangles, place a thin horizontal black line that spans exactly 80% of the poster width and is centered. At the bottom, render the exact text 'Project Alpha' in italic Times New Roman, and this text must be perfectly centered and 20mm above the bottom edge. The left column must be 40mm from the left edge, and the spacing between columns must be exactly equal."
+  },
+  {
+    "prompt_id": "complex_003_attribute_relation_occlusion",
+    "text": "A studio photograph of exactly 4 smartphones arranged on a glossy black surface. The phones must be positioned as follows: Phone 1 (red case) is in the top-left corner at a 30-degree tilt, Phone 2 (blue case) is in the top-right corner facing straight up, Phone 3 (yellow case with visible screen showing '15:30' in large white digits) is in the bottom-left and must partially occlude Phone 1's lower edge, Phone 4 (green case) is in the bottom-right at a 45-degree tilt. Each phone must display a different colored screen: Phone 1 shows pure cyan, Phone 2 shows pure magenta, Phone 3 shows the time '15:30' on a black background, Phone 4 shows pure yellow. A small white USB cable must connect Phone 2 and Phone 4, and this cable must NOT touch Phone 3. The cable must form a smooth curve with no sharp bends. A tiny red LED notification light must be visible on the top edge of Phone 1 only. The reflection of all phones must be clearly visible on the glossy surface, and the reflection must not overlap with any actual phone."
+  }
+]
+

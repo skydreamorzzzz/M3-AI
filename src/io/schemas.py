@@ -77,6 +77,11 @@ class TraceStep:
     # Stability-related fields (added in PR-7)
     error_type: Optional[str] = None       # Error type if edit failed
     edit_fallback: bool = False            # Whether edit failed and fallback was used
+    
+    # Quality-related fields (added for quality-aware refinement)
+    quality_score_before: Optional[float] = None  # Image quality score before edit (0-1)
+    quality_score_after: Optional[float] = None   # Image quality score after edit (0-1)
+    quality_improvement: bool = False             # Whether this was a quality improvement round
 
 @dataclass
 class PromptItem:
@@ -93,3 +98,7 @@ class RunSummary:
     conflict_count: int
     oscillation_detected: bool
     protection_rate: float
+    
+    # Quality-related fields
+    final_quality_score: float = 0.0      # Final image quality score (0-1)
+    quality_improved: bool = False        # Whether quality improvement was performed

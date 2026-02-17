@@ -174,6 +174,11 @@ class LLMClient:
         task: str,
         messages: List[Dict[str, Any]],
     ) -> str:
+        """
+        Mock response that returns parseable structured JSON for each task.
+        
+        This ensures downstream parsers don't fail in mock mode.
+        """
 
         last_user = ""
         for m in reversed(messages):
@@ -181,17 +186,101 @@ class LLMClient:
                 last_user = str(m.get("content", ""))
                 break
 
-        # Structured tasks must return JSON
-        if task in {"extract_constraints", "judge_constraint", "verify_pair"}:
+        # extract_constraints: must return {"constraints": [...]}
+        if task == "extract_constraints":
             return json.dumps(
                 {
-                    "mock": True,
-                    "task": task,
-                    "info": "mock response",
+                    "constraints": [
+                        {
+                            "id": "C1",
+                            "type": "object",
+                            "object": "mock_object",
+                            "value": None,
+                            "relation": None,
+                            "reference": None,
+                            "confidence": 0.9,
+                        },
+                        {
+                            "id": "C2",
+                            "type": "count",
+                            "object": "mock_item",
+                            "value": "3",
+                            "relation": None,
+                            "reference": None,
+                            "confidence": 0.85,
+                        },
+                    ]
                 },
                 ensure_ascii=False,
             )
 
+        # judge_constraint_one: must return {"passed", "confidence", "reason"}
+        if task == "judge_constraint_one":
+            return json.dumps(
+                {
+                    "passed": False,
+                    "confidence": 1.0,
+                    "reason": "mock judge_one: always fail (offline).",
+                },
+                ensure_ascii=False,
+            )
+
+        # judge_constraint_all: must return {"results": {cid: {...}}}
+        if task == "judge_constraint_all":
+            # Extract constraint IDs from user message (if possible)
+            # For mock, we return a generic structure
+            return json.dumps(
+                {
+                    "results": {
+                        "C1": {
+                            "passed": False,
+                            "confidence": 1.0,
+                            "reason": "mock judge_all: C1 fail (offline).",
+                        },
+                        "C2": {
+                            "passed": False,
+                            "confidence": 1.0,
+                            "reason": "mock judge_all: C2 fail (offline).",
+                        },
+                    }
+                },
+                ensure_ascii=False,
+            )
+
+        # judge_constraint (legacy): same as judge_constraint_one
+        if task == "judge_constraint":
+            return json.dumps(
+                {
+                    "passed": False,
+                    "confidence": 1.0,
+                    "reason": "mock judge: always fail (offline).",
+                },
+                ensure_ascii=False,
+            )
+
+        # verify_pair: must return {"decision", "confidence", "reason"}
+        if task == "verify_pair":
+            return json.dumps(
+                {
+                    "decision": "same",
+                    "confidence": 1.0,
+                    "reason": "mock verify: always same (offline).",
+                },
+                ensure_ascii=False,
+            )
+
+        # score_quality: must return {"quality_score", "reason", "weaknesses"}
+        if task == "score_quality":
+            return json.dumps(
+                {
+                    "quality_score": 0.6,
+                    "reason": "mock quality: medium quality (offline).",
+                    "weaknesses": ["mock limitation", "no real evaluation"],
+                },
+                ensure_ascii=False,
+            )
+
+        # Default fallback
         return json.dumps(
             {
                 "text": f"mock: {last_user[:200]}",
@@ -212,6 +301,7 @@ class LLMClient:
             "judge_constraint_one",   # Used by LLMJudgeBackend.judge_one()
             "judge_constraint_all",   # Used by LLMJudgeBackend.judge_all()
             "verify_pair",
+            "score_quality",          # Used by LLMJudgeBackend.score_quality()
         }
 
     def _call_openai(

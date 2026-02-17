@@ -1,54 +1,91 @@
-project_root/
+M3plus/
 │
 ├── data/
-│   └── prompts.json
+│   ├── prompts.json          # Input prompts for experiments
+│   └── demo.json             # Demo data
 │
-├── runs/
-│   ├── demo/
-│   ├── batch/
-│   ├── compare/
-│   └── _cache/
-│       └── llm_cache.sqlite3
+├── runs/                      # Experiment outputs (auto-generated)
+│   ├── <exp_id>/
+│   │   ├── aggregate.json    # Cross-strategy summary
+│   │   ├── metadata.json     # Run metadata (commit, env, stats) [NEW]
+│   │   ├── errors.json       # Failed samples registry [NEW]
+│   │   ├── logs/             # Structured logs [NEW]
+│   │   │   ├── run.log       # INFO+ logs
+│   │   │   └── error.log     # ERROR+ logs
+│   │   ├── <strategy>/
+│   │   │   ├── summary.csv   # Per-prompt summary
+│   │   │   └── trace_long.csv # Per-round trace
+│   │   └── _precomputed/     # Cached artifacts
+│   │       └── <prompt_id>/
+│   │           ├── initial.png
+│   │           └── initial.json
+│   ├── _cache/
+│   │   └── llm_cache.sqlite3
+│   └── _bad_extract_constraints/ # Debug dumps
 │
 ├── scripts/
-│   ├── run_one.py
-│   ├── run_batch.py
-│   └── run_compare.py
+│   ├── run_experiment.py     # Main multi-strategy experiment runner
+│   └── run_one.py            # Single-prompt runner
 │
 ├── src/
-│
+│   │
+│   ├── config/
+│   │   ├── model_config.py   # Model configurations (TEXT/VISION/IMAGE)
+│   │   ├── env_loader.py     # .env file loader [NEW]
+│   │   └── config_validator.py # Environment validation [NEW]
+│   │
+│   ├── utils/                 # [NEW] Utility modules
+│   │   ├── error_registry.py  # Failed sample tracking
+│   │   ├── retry_policy.py    # Retry decorator with backoff
+│   │   └── metadata_collector.py # Experiment metadata collection
+│   │
 │   ├── io/
-│   │   └── schemas.py
-│
+│   │   └── schemas.py        # Data schemas (Constraint, TraceStep, etc.)
+│   │
 │   ├── graph/
-│   │   ├── build_drg.py
-│   │   ├── validate_graph.py
-│   │   └── metrics_coupling.py
-│
+│   │   ├── build_drg.py      # Build Dependency-Relation Graph
+│   │   ├── validate_graph.py # DAG validation & cycle breaking
+│   │   ├── dag.py            # DAG utilities
+│   │   └── metrics_coupling.py # Graph coupling metrics
+│   │
 │   ├── scheduler/
-│   │   ├── dag_topo.py
-│   │   └── conflict_aware.py
-│
+│   │   ├── linear_scheduler.py    # Linear baseline scheduler
+│   │   ├── dag_topo.py            # Topological scheduler
+│   │   ├── topo_scheduler.py      # (Legacy)
+│   │   ├── conflict_aware.py      # Conflict-aware scheduler
+│   │   └── conflict_matrix.py     # Conflict tracking
+│   │
 │   ├── refine/
-│   │   ├── checker.py
-│   │   ├── editor.py
-│   │   ├── verifier.py
-│   │   └── loop_core.py
-│
+│   │   ├── checker.py        # Constraint checker (judge backend)
+│   │   ├── editor.py         # Image editor (with retry) [MODIFIED]
+│   │   ├── verifier.py       # Candidate verifier
+│   │   ├── initial.py        # Initial artifact generator
+│   │   └── loop_core.py      # Main refinement loop [MODIFIED]
+│   │
 │   ├── eval/
-│   │   ├── oscillation.py
-│   │   ├── aggregate.py
-│   │   └── stratify.py
-│
+│   │   ├── oscillation.py    # Oscillation detection
+│   │   ├── aggregate.py      # Multi-strategy aggregation
+│   │   ├── metrics.py        # Evaluation metrics
+│   │   ├── protection.py     # Protection rate
+│   │   └── stratify.py       # Stratified analysis
+│   │
 │   └── llm/
-│       ├── cache.py
-│       ├── client.py
-│       ├── normalize.py
+│       ├── cache.py          # LLM response cache (SQLite)
+│       ├── client.py         # Unified LLM client (TEXT/VISION) [MODIFIED]
+│       ├── normalize.py      # Response normalization
+│       ├── wanx_client.py    # Wanx image gen/edit client
 │       │
 │       └── prompts/
-│           ├── extract_constraints.py
-│           ├── judge_constraint.py
-│           ├── verify_pair.py
-│           └── edit_instruction.py
+│           ├── extract_constraints.py  # Planner agent
+│           ├── judge_constraint.py     # Judge agent
+│           ├── verify_pair.py          # Verifier agent
+│           └── edit_instruction.py     # Edit instruction builder
 │
-└── README.md
+├── illustrate/               # Code documentation snapshots
+│   └── (auto-generated .txt files)
+│
+├── .env.example              # Environment variable template [NEW]
+├── .gitignore
+├── README.md
+├── requirements.txt          # Python dependencies
+└── Filetree_v2.txt           # This file

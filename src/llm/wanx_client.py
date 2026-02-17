@@ -239,22 +239,111 @@ class WanxImageEditClient(_WanxBaseClient):
     def edit(self, image_path: Path, instruction: str, out_path: Path) -> Path:
         """
         Edit image using instruction (async task).
-        NOTE: Official HTTP API expects input.images as URL list (not base64).
-        So this client currently requires the image to be accessible via URL.
-
-        Practical workaround:
-        - If you only run locally, keep dry_run=1 for now.
-        - Or upload image to OSS / a temporary HTTP server and pass URL.
+        
+        NOTE: Official HTTP API expects input.images as URL list.
+        This implementation auto-uploads local files to temporary OSS storage.
         """
         if out_path.exists():
             print(f"[WANX-EDIT] Cache hit, reuse: {out_path}")
             return out_path
 
-        # We cannot send local path directly to official HTTP API (expects URLs).
-        # Fail fast with a clear message.
-        raise RuntimeError(
-            "Wanx image editing HTTP API expects input.images as public URLs. "
-            "Your pipeline currently produces local files only. "
-            "Options: (1) keep --dry_run 1; (2) add an upload step (OSS / temp server) and pass URL; "
-            "(3) switch to Qwen Image Edit (it supports base64 in some modes)."
-        )
+        print(f"[WANX-EDIT] Preparing image for editing...")
+        print(f"[WANX-EDIT] Input: {image_path}")
+        
+        # Check if input is already a URL
+        image_str = str(image_path)
+        if image_str.startswith("http://") or image_str.startswith("https://"):
+            image_url = image_str
+            print(f"[WANX-EDIT] Using provided URL: {image_url[:80]}...")
+        else:
+            # Upload local file to temporary OSS
+            print(f"[WANX-EDIT] Uploading local file to OSS...")
+            image_url = self._upload_to_oss(image_path)
+            print(f"[WANX-EDIT] Upload complete: {image_url[:80]}...")
+        
+        # Call edit API
+        url_path = "/api/v1/services/aigc/image2image/image-synthesis"
+        
+        # Payload structure depends on model type
+        # wanx-sketch-to-image-lite: expects sketch_image_url
+        # wanx-v1: may use different structure
+        payload = {
+            "model": self.model,
+            "input": {
+                "sketch_image_url": image_url,  # Correct field name for sketch-to-image
+                "prompt": instruction,
+            },
+            "parameters": {
+                "n": 1,
+            },
+        }
+        
+        print(f"[WANX-EDIT] Submitting edit task...")
+        
+        # Retry loop
+        for attempt in range(self.max_retries + 1):
+            try:
+                data = self._post_with_fallback(
+                    url_path,
+                    payload,
+                    timeout=60,
+                    async_enable=True,
+                    tag="[WANX-EDIT]"
+                )
+                
+                task_id = data.get("output", {}).get("task_id")
+                if not task_id:
+                    raise RuntimeError(f"[WANX-EDIT] Invalid response: {data}")
+                
+                print(f"[WANX-EDIT] Task created: {task_id}")
+                
+                # Poll task
+                final = self._poll_task(task_id, base_url=self.base_url)
+                
+                image_url_result = (final.get("output", {}).get("results", [{}])[0].get("url"))
+                if not image_url_result:
+                    raise RuntimeError(f"[WANX-EDIT] No image URL in result: {final}")
+                
+                # Download edited image
+                img = requests.get(image_url_result, timeout=60)
+                if img.status_code >= 400:
+                    _print_http_error("[WANX-EDIT-DL]", img)
+                    img.raise_for_status()
+                
+                out_path.parent.mkdir(parents=True, exist_ok=True)
+                out_path.write_bytes(img.content)
+                
+                print(f"[WANX-EDIT] Edit completed: {out_path}")
+                return out_path
+            
+            except Exception as e:
+                if attempt >= self.max_retries:
+                    raise
+                print(f"[WANX-EDIT] Retry {attempt+1}/{self.max_retries} after error: {e}")
+                time.sleep(2)
+        
+        raise RuntimeError("[WANX-EDIT] Failed after retries.")
+    
+    def _upload_to_oss(self, local_path: Path) -> str:
+        """
+        Convert local file to base64 data URL.
+        
+        NOTE: Wanx Image2Image API may or may not support data URLs.
+        If it fails, you'll need to:
+        1. Manually upload to your own OSS bucket
+        2. Or use a different image edit API
+        
+        Returns: data URL (base64 encoded)
+        """
+        import base64
+        
+        print(f"[WANX-UPLOAD] Converting to base64: {local_path.name}...")
+        
+        with open(local_path, "rb") as f:
+            file_data = f.read()
+        
+        b64 = base64.b64encode(file_data).decode("ascii")
+        data_url = f"data:image/png;base64,{b64}"
+        
+        print(f"[WANX-UPLOAD] Base64 conversion complete ({len(data_url)} chars)")
+        return data_url

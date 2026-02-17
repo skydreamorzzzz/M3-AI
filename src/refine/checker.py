@@ -72,10 +72,15 @@ class JudgeBackend(Protocol):
 
 
 # ============================================================
-# Instruction template (unchanged logic)
+# Instruction template (exposed for loop_core)
 # ============================================================
 
 def _mk_instruction(constraint: Constraint) -> str:
+    """
+    Generate edit instruction from constraint.
+    
+    This function is used by both Checker.check_one() and loop_core.py
+    """
 
     obj = (constraint.object or "").strip()
     ref = (constraint.reference or "").strip()

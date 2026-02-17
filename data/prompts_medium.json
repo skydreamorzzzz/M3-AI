@@ -1,0 +1,15 @@
+[
+  {
+    "prompt_id": "med_001_chess_scene",
+    "text": "A realistic photo of a wooden chess board on a dark oak table. The board contains: exactly 2 white pawns on row 2 (columns B and G), exactly 3 black knights forming a diagonal (C3, D4, E5), one red queen on E1, and one blue rook on H8. Behind the board, place exactly 5 identical white coffee mugs in a horizontal line. The leftmost mug should slightly overlap the chess board's edge. A green digital clock showing '10:45' must be visible on the right side, aligned with the board's top edge. View from 45-degree front-right angle."
+  },
+  {
+    "prompt_id": "med_002_layered_objects",
+    "text": "A top-down view of a wooden desk with exactly 4 overlapping books. Book 1 (bottom, blue cover) is horizontal. Book 2 (red cover) is placed at 30 degrees on top of Book 1. Book 3 (green cover with gold text 'MANUAL') is placed at 60 degrees on top of Book 2. Book 4 (yellow cover) is placed vertically on top, partially covering all three. A silver pen must lie across Book 4 and Book 3 without touching Book 1. A small black coffee cup is in the top-right corner, 5cm from both edges."
+  },
+  {
+    "prompt_id": "med_003_precise_spatial",
+    "text": "A minimalist scene: on a white table, place exactly 3 identical red spheres forming an equilateral triangle. Each sphere is 10cm in diameter. The triangle's center is exactly at the table's center. To the left of the triangle, place a blue cube (8cm sides) exactly 15cm from the nearest sphere. To the right, place a yellow cylinder (6cm diameter, 12cm height) exactly 15cm from the nearest sphere. Behind the triangle, place a small mirror (20cm x 10cm) standing vertically, and the mirror must reflect all 3 spheres clearly. Soft directional lighting from top-left creating subtle shadows."
+  }
+]
+

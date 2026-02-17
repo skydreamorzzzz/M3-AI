@@ -1,1 +1,20 @@
+# Core numeric / data
+numpy>=1.24
+pandas>=2.0
+
+# Plotting (for analysis scripts / figs)
+matplotlib>=3.7
+
+# Graph / scheduling (if you use DAG utilities / conflict graph)
+networkx>=3.1
+
+# HTTP + API clients
+requests>=2.31
 openai>=1.0.0
+
+# Config / utils
+PyYAML>=6.0
+tqdm>=4.66
+
+# Image handling (sometimes used for local image IO / conversions)
+Pillow>=10.0

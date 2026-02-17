@@ -81,14 +81,14 @@ IMAGE_GEN_LLM = ModelConfig(
 )
 
 # ============================================================
-# 🟩 IMAGE EDITING（Wanx async）
-# 注意：你当前 pipeline 还没做“本地图片→URL 上传”，真编辑会先 fail-fast
+# 🟩 IMAGE EDITING（Qwen Image Edit，compatible-mode）
+# 使用 qwen-image-edit 系列，直接支持本地文件输入
 # ============================================================
 
 IMAGE_EDIT_LLM = ModelConfig(
     provider="qwen",
-    model="wanx-edit",
-    base_url="https://dashscope.aliyuncs.com",
+    model="qwen-image-edit",
+    base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
     api_key=None,
     temperature=0.0,
     backend="",

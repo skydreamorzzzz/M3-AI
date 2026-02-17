@@ -1,0 +1,14 @@
+[
+  {
+    "prompt_id": "hc_001_ticket_poster",
+    "text": "Create a clean poster on a white wall. In the center, there is a red rectangle sign with the exact text 'GATE 12' in bold black letters. Below the sign, place exactly three blue balloons tied to a single thin black string. The balloons must form a triangle: one balloon at the top, two balloons at the bottom, and none overlapping the text. On the right side of the red sign, place a small green arrow pointing to the right, and the arrow must be horizontally aligned with the word 'GATE'. The entire composition should be symmetric left-to-right except the green arrow."
+  },
+  {
+    "prompt_id": "hc_002_books_occlusion",
+    "text": "A wooden table with exactly four books arranged in a row. The second book from the left is yellow and must partially cover the third book (the third book is red) so that the red book is still visible. On the spine of the yellow book, the exact text 'DATA' must be readable. A small black coffee cup is placed in front of the first book without touching it. A silver spoon is to the right of the cup and must not overlap any book. The books must be evenly spaced, except for the overlap between the yellow and red book."
+  },
+  {
+    "prompt_id": "hc_003_faces_and_badge",
+    "text": "A group photo of exactly three people standing in a line. The middle person wears a white shirt with a round blue badge that has the exact text 'TEAM A'. The left person must be slightly behind the middle person, and the right person must be slightly in front of the middle person. All three people must be fully visible from waist up with no cropped heads. The badge text must be clearly readable and centered on the badge. The background is a plain gray wall."
+  }
+]

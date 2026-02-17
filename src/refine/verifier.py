@@ -15,7 +15,7 @@ Design:
     - If provided with status dicts, we can compare by:
         1) number of FAILED constraints (lower is better)
         2) number of newly broken constraints (lower is better)
-        3) tie -> "same"
+        3) number of newly fixed constraints (higher is better)
     - If no status information is provided, default to "same" (conservative).
 
 This supports an end-to-end dry-run loop for debugging and ablations of scheduling logic.
@@ -24,7 +24,7 @@ This supports an end-to-end dry-run loop for debugging and ablations of scheduli
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Protocol, Literal, Tuple
+from typing import Any, Dict, Optional, Protocol, Literal
 
 
 Decision = Literal["better", "worse", "same"]
@@ -136,37 +136,51 @@ class Verifier:
         Primary objective:
           minimize #failed constraints.
 
-        Secondary (anti-regression):
-          penalize newly broken constraints (passed -> failed).
+        Secondary:
+          avoid regressions (newly broken constraints).
+
+        Tertiary:
+          reward newly fixed constraints when failed count ties.
 
         If missing status info, return "same".
         """
-        if not status_best or not status_candidate:
+        sb = self._ensure_bool_dict(status_best)
+        sc = self._ensure_bool_dict(status_candidate)
+        if sb is None or sc is None:
             return "same"
 
-        best_failed = self._count_failed(status_best)
-        cand_failed = self._count_failed(status_candidate)
+        best_failed = self._count_failed(sb)
+        cand_failed = self._count_failed(sc)
 
+        newly_broken = self._newly_broken(sb, sc)
+        newly_fixed = self._newly_fixed(sb, sc)
+
+        # Hard anti-regression gate:
+        # If candidate breaks anything that was previously passed, it is WORSE.
+        if self.params.prefer_non_regression and newly_broken > 0:
+            return "worse"
+
+        # No regressions:
         if cand_failed < best_failed:
-            # candidate has fewer failures
-            if self.params.prefer_non_regression:
-                # still check regressions (optional)
-                if self._newly_broken(status_best, status_candidate) > 0:
-                    # improved failures but broke something: treat as "same" or even "worse"
-                    # Here we choose "same" to be conservative.
-                    return "same"
             return "better"
-
         if cand_failed > best_failed:
             return "worse"
 
-        # equal failed count: check regressions if enabled
-        if self.params.prefer_non_regression:
-            nb = self._newly_broken(status_best, status_candidate)
-            if nb > 0:
-                return "worse"
+        # Same failed count:
+        if newly_fixed > 0:
+            return "better"
 
         return "same"
+
+    def _ensure_bool_dict(self, status: Optional[Dict[str, bool]]) -> Optional[Dict[str, bool]]:
+        """
+        Defensive normalization:
+        - require dict
+        - cast values to bool
+        """
+        if not status or not isinstance(status, dict):
+            return None
+        return {str(k): bool(v) for k, v in status.items()}
 
     def _count_failed(self, status: Dict[str, bool]) -> int:
         return sum(1 for _, ok in status.items() if not bool(ok))
@@ -181,3 +195,14 @@ class Verifier:
             if bool(ok) and (not bool(after.get(cid, False))):
                 broken += 1
         return broken
+
+    def _newly_fixed(self, before: Dict[str, bool], after: Dict[str, bool]) -> int:
+        """
+        Count constraints that were FAIL in before but PASS in after.
+        Missing in after treated as FAIL.
+        """
+        fixed = 0
+        for cid, ok in before.items():
+            if (not bool(ok)) and bool(after.get(cid, False)):
+                fixed += 1
+        return fixed

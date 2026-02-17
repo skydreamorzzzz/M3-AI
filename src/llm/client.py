@@ -181,13 +181,50 @@ class LLMClient:
                 last_user = str(m.get("content", ""))
                 break
 
-        # Structured tasks must return JSON
-        if task in {"extract_constraints", "judge_constraint", "verify_pair"}:
+        # Structured tasks return task-shaped JSON so local parsers can run end-to-end.
+        if task == "extract_constraints":
             return json.dumps(
                 {
+                    "constraints": [
+                        {
+                            "id": "C1",
+                            "type": "object",
+                            "object": "scene",
+                            "value": None,
+                            "relation": None,
+                            "reference": None,
+                            "confidence": 1.0,
+                        }
+                    ]
+                },
+                ensure_ascii=False,
+            )
+
+        if task in {"judge_constraint", "judge_constraint_one"}:
+            return json.dumps(
+                {
+                    "passed": False,
+                    "confidence": 1.0,
+                    "reason": "mock judge: always fail",
+                },
+                ensure_ascii=False,
+            )
+
+        if task == "judge_constraint_all":
+            return json.dumps(
+                {
+                    "constraints": {},
                     "mock": True,
-                    "task": task,
-                    "info": "mock response",
+                },
+                ensure_ascii=False,
+            )
+
+        if task == "verify_pair":
+            return json.dumps(
+                {
+                    "decision": "same",
+                    "confidence": 1.0,
+                    "reason": "mock verify: keep current best",
                 },
                 ensure_ascii=False,
             )

@@ -30,8 +30,10 @@ if str(ROOT) not in sys.path:
 
 # ---------------- Schema / Graph ----------------
 from src.io.schemas import PromptItem, Constraint
+from src.io.schemas import RunSummary
 from src.graph.build_drg import build_drg
 from src.graph.validate_graph import ensure_dag
+from src.eval.aggregate import aggregate_metrics
 
 # ---------------- Clients ----------------
 from src.config.model_config import (
@@ -144,6 +146,18 @@ def _build_scheduler(name: str):
     raise ValueError(f"Unknown strategy: {name}")
 
 
+def _to_run_summary(row: Dict[str, Any]) -> RunSummary:
+    """Convert a summary row dict (from dataclass __dict__) into RunSummary safely."""
+    return RunSummary(
+        prompt_id=str(row.get("prompt_id", "")),
+        total_rounds=int(row.get("total_rounds", 0)),
+        final_pass=bool(row.get("final_pass", False)),
+        conflict_count=int(row.get("conflict_count", 0)),
+        oscillation_detected=bool(row.get("oscillation_detected", False)),
+        protection_rate=float(row.get("protection_rate", 0.0)),
+    )
+
+
 # ============================================================
 # Main
 # ============================================================
@@ -237,6 +251,7 @@ def main():
         "backend": args.backend,
         "dry_run": bool(args.dry_run),
         "results": {},
+        "best_strategy": None,
     }
 
     # ============================================================
@@ -376,9 +391,40 @@ def main():
                 fieldnames=list(summary_rows[0].keys()),
             )
 
+        run_summaries = [_to_run_summary(r) for r in summary_rows]
+        metrics = aggregate_metrics(run_summaries)
+
         aggregate_all["results"][strategy_name] = {
-            "n_prompts": len(prompts)
+            "n_prompts": len(prompts),
+            "n_completed": len(summary_rows),
+            "n_failed": len(prompts) - len(summary_rows),
+            "metrics": metrics,
         }
+
+    # Choose best strategy using a simple paper-friendly rule:
+    # 1) higher pass_rate, 2) lower avg_rounds, 3) lower conflict_rate.
+    # Tie handling: keep all best candidates and choose the one that appears first
+    # in CLI strategy order, so comparisons stay reproducible.
+    scored = []
+    for idx, name in enumerate(strategy_list):
+        payload = aggregate_all["results"].get(name, {})
+        m = payload.get("metrics", {})
+        score = (
+            float(m.get("pass_rate", 0.0)),
+            -float(m.get("avg_rounds", 0.0)),
+            -float(m.get("conflict_rate", 0.0)),
+        )
+        scored.append((score, idx, name))
+
+    if scored:
+        scored.sort(key=lambda x: (x[0][0], x[0][1], x[0][2]), reverse=True)
+        top_score = scored[0][0]
+        best_candidates = [name for score, _, name in scored if score == top_score]
+        aggregate_all["best_candidates"] = best_candidates
+        aggregate_all["best_strategy"] = min(
+            best_candidates,
+            key=lambda n: strategy_list.index(n),
+        )
 
     # ---------------- Final Aggregate ----------------
     (base_out / "aggregate.json").write_text(

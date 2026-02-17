@@ -84,6 +84,9 @@ Recommended before running full edit loop.
 # 6. Full Real Pipeline (Includes Editing)
 ⚠️ This consumes image edit credits.
 
+Image editing now uses **qwen-image-edit** series via DashScope compatible mode,
+which accepts local image files directly (no manual base64 conversion).
+
 python scripts/run_experiment.py --input data/prompts.json --backend openai --dry_run 0 --strategies topo_conflict --max_rounds 4
 
 ---

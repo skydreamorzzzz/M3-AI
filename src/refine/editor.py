@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from src.utils.retry_policy import retry_with_backoff
+
 
 # ============================================================
 # Artifact Handle
@@ -100,7 +102,7 @@ class Editor:
             )
 
         # ------------------------------------------------------------
-        # Real Wanx Edit
+        # Real Wanx Edit (with retry + fallback)
         # ------------------------------------------------------------
 
         if self.backend is None:
@@ -121,19 +123,49 @@ class Editor:
         print(f"[EDITOR] Input image: {image_path}")
         print(f"[EDITOR] Output image: {new_path}")
 
-        edited_path = self.backend.edit(
-            image_path=image_path,
-            instruction=instruction,
-            out_path=new_path,
+        # Retry wrapper
+        @retry_with_backoff(
+            max_retries=2,  # Total 3 attempts
+            initial_delay=2.0,
+            backoff_factor=2.0,
+            exceptions=(RuntimeError, TimeoutError, ConnectionError, OSError),
+            on_retry=lambda attempt, e: print(
+                f"[EDITOR] Retry {attempt}/2 after error: {type(e).__name__}: {e}"
+            ),
         )
+        def _call_edit_with_retry():
+            return self.backend.edit(
+                image_path=image_path,
+                instruction=instruction,
+                out_path=new_path,
+            )
 
-        print(f"[EDITOR] Edit completed: {edited_path}")
+        try:
+            edited_path = _call_edit_with_retry()
+            print(f"[EDITOR] Edit completed: {edited_path}")
 
-        return ArtifactHandle(
-            payload=str(edited_path),
-            meta={
-                "edited": True,
-                "round_id": round_id,
-                "instruction": instruction,
-            },
-        )
+            return ArtifactHandle(
+                payload=str(edited_path),
+                meta={
+                    "edited": True,
+                    "round_id": round_id,
+                    "instruction": instruction,
+                },
+            )
+
+        except Exception as e:
+            # Graceful fallback: return original artifact (do not crash)
+            print(f"[EDITOR] Edit failed after retries: {type(e).__name__}: {e}")
+            print(f"[EDITOR] Fallback to original artifact")
+
+            return ArtifactHandle(
+                payload=artifact.payload,
+                meta={
+                    "edited": False,
+                    "error": str(e),
+                    "error_type": type(e).__name__,
+                    "fallback": True,
+                    "round_id": round_id,
+                    "instruction": instruction,
+                },
+            )

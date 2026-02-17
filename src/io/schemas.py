@@ -73,6 +73,10 @@ class TraceStep:
 
     edit_instruction: Optional[str] = None
     accepted: bool = True
+    
+    # Stability-related fields (added in PR-7)
+    error_type: Optional[str] = None       # Error type if edit failed
+    edit_fallback: bool = False            # Whether edit failed and fallback was used
 
 @dataclass
 class PromptItem:

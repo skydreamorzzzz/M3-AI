@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import csv
+import traceback
 from datetime import datetime
 from pathlib import Path
 import sys
@@ -157,36 +158,54 @@ def main():
     parser.add_argument("--dry_run", type=int, default=1)
     args = parser.parse_args()
 
+    # Load .env file (if exists)
+    from src.config.env_loader import load_env
+    load_env()
+
+    # Validate configuration (only for real backend)
+    if args.backend != "mock":
+        from src.config.config_validator import validate_config
+        try:
+            validate_config(["DEEPSEEK_API_KEY", "DASHSCOPE_API_KEY"])
+        except ValueError as e:
+            print(f"[ERROR] {e}")
+            sys.exit(1)
+
     prompts = _load_prompts(args.input)
 
     exp_id = args.exp_id.strip() or datetime.now().strftime("exp_%Y%m%d_%H%M%S")
     base_out = ROOT / "runs" / exp_id
     base_out.mkdir(parents=True, exist_ok=True)
 
+    # Record start time
+    start_time = datetime.now()
+
     # ---------------- Build Clients ----------------
     _log("INIT", "Building clients...")
 
-    text_client = get_text_client()
-    _log("INIT", f"Text model: {text_client.model}")
-
-    # Vision client only needed for real judging/verifying.
-    vision_client = None
-    if args.backend != "mock":
-        vision_client = get_vision_client()
-        _log("INIT", f"Vision model: {vision_client.model}")
+    # Build clients based on backend mode
+    if args.backend == "mock":
+        # Mock mode: use mock client without key checking
+        from src.llm.client import LLMClient
+        
+        text_client = LLMClient(model="mock", backend="mock")
+        vision_client = None
+        image_gen_client = None
+        image_edit_client = None
+        
+        _log("INIT", "Mock mode: all clients are offline (no API calls)")
+    
     else:
-        _log("INIT", "MOCK mode: skip vision client (no real judging).")
-
-    image_gen_client = None
-    image_edit_client = None
-
-    if args.backend != "mock":
+        # Real mode: build clients with key checking
+        text_client = get_text_client()
+        vision_client = get_vision_client()
         image_gen_client = get_image_gen_client()
         image_edit_client = get_image_edit_client()
+        
+        _log("INIT", f"Text model: {text_client.model}")
+        _log("INIT", f"Vision model: {vision_client.model}")
         _log("INIT", f"Image Gen model: {image_gen_client.model}")
         _log("INIT", f"Image Edit model: {image_edit_client.model}")
-    else:
-        _log("INIT", "Running in MOCK mode (no real image calls)")
 
     # ---------------- Backends ----------------
     if args.backend == "mock":
@@ -224,6 +243,14 @@ def main():
     # Run
     # ============================================================
 
+    # Initialize error registry (global for all strategies)
+    from src.utils.error_registry import ErrorRegistry
+    error_registry = ErrorRegistry()
+
+    # Global statistics (across all strategies)
+    global_n_success = 0
+    global_n_attempted = 0
+
     for strategy_name in strategy_list:
 
         _log("STRATEGY", f"Running strategy: {strategy_name}")
@@ -239,60 +266,97 @@ def main():
 
             _log("PROMPT", f"Processing prompt_id={pid}")
 
-            # ---------------- Planner ----------------
-            constraints = extract_constraints(text_client, text)
-            _log("PLANNER", f"{pid}: extracted {len(constraints)} constraints")
+            try:
+                # ---------------- Phase 1: Planner ----------------
+                try:
+                    constraints = extract_constraints(text_client, text)
+                    _log("PLANNER", f"{pid}: extracted {len(constraints)} constraints")
+                except Exception as e:
+                    error_registry.record(pid, "extract_constraints", e, traceback.format_exc())
+                    _log("ERROR", f"{pid}: Failed at extract_constraints: {e}")
+                    continue  # Skip this prompt
 
-            # ---------------- Graph ----------------
-            full_graph = build_drg(constraints)
-            dep_graph, _ = ensure_dag(full_graph)
-            _log("GRAPH", f"{pid}: graph nodes={len(dep_graph.nodes)}")
+                # ---------------- Phase 2: Graph ----------------
+                try:
+                    full_graph = build_drg(constraints)
+                    dep_graph, _ = ensure_dag(full_graph)
+                    _log("GRAPH", f"{pid}: graph nodes={len(dep_graph.nodes)}")
+                except Exception as e:
+                    error_registry.record(pid, "build_graph", e, traceback.format_exc())
+                    _log("ERROR", f"{pid}: Failed at build_graph: {e}")
+                    continue
 
-            prompt_dir = base_out / "_precomputed" / pid
-            prompt_dir.mkdir(parents=True, exist_ok=True)
+                # ---------------- Phase 3: Initial Image ----------------
+                prompt_dir = base_out / "_precomputed" / pid
+                prompt_dir.mkdir(parents=True, exist_ok=True)
 
-            # ---------------- Initial Image ----------------
-            _log("INITIAL", f"{pid}: generating initial image...")
-            artifact, _ = generate_initial_artifact(
-                prompt_id=pid,
-                prompt_text=text,
-                out_dir=prompt_dir,
-                image_gen_client=image_gen_client,
-                backend=args.backend,
-            )
-            _log("INITIAL", f"{pid}: artifact payload={artifact.payload}")
+                try:
+                    _log("INITIAL", f"{pid}: generating initial image...")
+                    artifact, _ = generate_initial_artifact(
+                        prompt_id=pid,
+                        prompt_text=text,
+                        out_dir=prompt_dir,
+                        image_gen_client=image_gen_client,
+                        backend=args.backend,
+                    )
+                    _log("INITIAL", f"{pid}: artifact payload={artifact.payload}")
+                except Exception as e:
+                    error_registry.record(pid, "generate_initial", e, traceback.format_exc())
+                    _log("ERROR", f"{pid}: Failed at generate_initial: {e}")
+                    continue
 
-            # ---------------- Loop ----------------
-            prompt_item = PromptItem(
-                prompt_id=pid,
-                text=text,
-                constraints=constraints,
-                graph=dep_graph,
-            )
+                # ---------------- Phase 4: Loop ----------------
+                prompt_item = PromptItem(
+                    prompt_id=pid,
+                    text=text,
+                    constraints=constraints,
+                    graph=dep_graph,
+                )
 
-            _log("LOOP", f"{pid}: starting refine loop")
+                try:
+                    _log("LOOP", f"{pid}: starting refine loop")
 
-            best, traces, summary = run_refine_loop(
-                item=prompt_item,
-                scheduler=scheduler,
-                checker=checker,
-                editor=editor,
-                verifier=verifier,
-                params=LoopParams(max_rounds=args.max_rounds),
-                initial_artifact=artifact,
-            )
+                    best, traces, summary = run_refine_loop(
+                        item=prompt_item,
+                        scheduler=scheduler,
+                        checker=checker,
+                        editor=editor,
+                        verifier=verifier,
+                        params=LoopParams(max_rounds=args.max_rounds),
+                        initial_artifact=artifact,
+                        out_dir=prompt_dir,
+                    )
 
-            _log(
-                "LOOP",
-                f"{pid}: finished. rounds={summary.total_rounds}, "
-                f"conflicts={summary.conflict_count}, "
-                f"final_pass={summary.final_pass}",
-            )
+                    _log(
+                        "LOOP",
+                        f"{pid}: finished. rounds={summary.total_rounds}, "
+                        f"conflicts={summary.conflict_count}, "
+                        f"final_pass={summary.final_pass}",
+                    )
 
-            for t in traces:
-                trace_rows.append(t.__dict__)
+                    # Success: record trace and summary
+                    for t in traces:
+                        trace_rows.append(t.__dict__)
 
-            summary_rows.append(summary.__dict__)
+                    summary_rows.append(summary.__dict__)
+                    
+                    # Update global success count (only once per prompt, not per strategy)
+                    if strategy_name == strategy_list[0]:
+                        global_n_success += 1
+
+                except Exception as e:
+                    error_registry.record(pid, "refine_loop", e, traceback.format_exc())
+                    _log("ERROR", f"{pid}: Failed at refine_loop: {e}")
+                    continue
+
+            except Exception as e:
+                # Outer catch-all (in case error_registry itself fails)
+                error_registry.record(pid, "unknown", e, traceback.format_exc())
+                _log("CRITICAL", f"{pid}: Unexpected outer exception: {e}")
+        
+        # Update global attempted count (after all prompts in this strategy)
+        if strategy_name == strategy_list[0]:
+            global_n_attempted = len(prompts)
 
         # ---------------- Write Outputs ----------------
         out_dir = base_out / strategy_name
@@ -321,6 +385,29 @@ def main():
         json.dumps(aggregate_all, ensure_ascii=False, indent=2),
         encoding="utf-8",
     )
+
+    # ---------------- Save Errors ----------------
+    # Always generate errors.json (even if empty) for downstream scripts
+    error_registry.save(base_out / "errors.json")
+    if error_registry.errors:
+        _log("ERROR", f"Total errors: {len(error_registry.errors)}")
+        _log("ERROR", f"By phase: {error_registry.count_by_phase()}")
+    else:
+        _log("INFO", "No errors recorded.")
+
+    # ---------------- Save Metadata ----------------
+    from src.utils.metadata_collector import collect_metadata, save_metadata
+    
+    end_time = datetime.now()
+    statistics = {
+        "n_prompts": len(prompts),
+        "n_success": global_n_success,
+        "n_failed": len(error_registry.errors),
+        "n_skipped": 0,
+    }
+    
+    metadata = collect_metadata(exp_id, args, start_time, end_time, statistics)
+    save_metadata(metadata, base_out / "metadata.json")
 
     _log("DONE", f"Experiment completed. Output at {base_out}")
 

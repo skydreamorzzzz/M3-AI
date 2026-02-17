@@ -72,9 +72,15 @@ def run_refine_loop(
     params: Optional[LoopParams] = None,
     initial_artifact: Optional[ArtifactHandle] = None,
     conflict_matrix: Optional[ConflictMatrix] = None,
+    out_dir: Optional[Any] = None,
 ) -> Tuple[ArtifactHandle, List[TraceStep], RunSummary]:
 
     params = params or LoopParams()
+
+    # Set default out_dir
+    if out_dir is None:
+        from pathlib import Path
+        out_dir = Path("runs") / item.prompt_id
 
     constraints = item.constraints or []
     cmap = _constraint_map(constraints)
@@ -149,7 +155,13 @@ def run_refine_loop(
             # already satisfied — skip edit
             continue
 
-        candidate = editor.edit(best, local_res.edit_instruction)
+        candidate = editor.edit(
+            artifact=best,
+            instruction=local_res.edit_instruction,
+            round_id=t,
+            prompt_id=item.prompt_id,
+            out_dir=out_dir,
+        )
 
         # ============================================================
         # Global evaluation of candidate
@@ -193,6 +205,13 @@ def run_refine_loop(
             if cid != selected:
                 cm.record_conflict(selected, cid)
 
+        # Extract error info from candidate artifact (if editor fallback occurred)
+        error_type = None
+        edit_fallback = False
+        if hasattr(candidate, "meta") and isinstance(candidate.meta, dict):
+            error_type = candidate.meta.get("error_type")
+            edit_fallback = candidate.meta.get("fallback", False)
+
         traces.append(
             TraceStep(
                 round_id=t,
@@ -203,6 +222,8 @@ def run_refine_loop(
                 improved_constraints=improved,
                 edit_instruction=local_res.edit_instruction,
                 accepted=accepted,
+                error_type=error_type,
+                edit_fallback=edit_fallback,
             )
         )
 

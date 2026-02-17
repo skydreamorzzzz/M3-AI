@@ -40,7 +40,7 @@ from src.io.schemas import PromptItem, ConstraintGraph  # noqa: E402
 from src.llm.cache import SqliteCache  # noqa: E402
 from src.llm.client import LLMClient  # noqa: E402
 
-from src.config.model_config import TEXT_LLM, VISION_LLM, IMAGE_LLM  # noqa: E402
+from src.config.model_config import TEXT_LLM, VISION_LLM  # noqa: E402
 
 from src.llm.prompts.extract_constraints import extract_constraints  # noqa: E402
 from src.llm.prompts.judge_constraint import LLMJudgeBackend  # noqa: E402
@@ -166,7 +166,6 @@ def main():
     # optional per-role model overrides (useful for quick debugging)
     parser.add_argument("--text_model", type=str, default="", help="override TEXT_LLM.model")
     parser.add_argument("--vision_model", type=str, default="", help="override VISION_LLM.model")
-    parser.add_argument("--image_model", type=str, default="", help="override IMAGE_LLM.model (future)")
 
     parser.add_argument("--cache", type=str, default=str(ROOT / "runs/_cache/llm_cache.sqlite3"))
     parser.add_argument("--max_rounds", type=int, default=5)
@@ -186,12 +185,6 @@ def main():
         backend=args.backend,
         cache=cache,
         model_override=(args.vision_model or "").strip() or None,
-    )
-    _ = _build_client_from_cfg(  # reserved for future image generation/edit integration
-        IMAGE_LLM,
-        backend=args.backend,
-        cache=cache,
-        model_override=(args.image_model or "").strip() or None,
     )
 
     # 1) Planner: extract constraints (TEXT LLM)
@@ -226,6 +219,10 @@ def main():
         meta={"source": "initial"},
     )
 
+    # 5) Define output directory (before run_refine_loop)
+    out_dir = ROOT / f"runs/{args.prompt_id}_{args.strategy}"
+    out_dir.mkdir(parents=True, exist_ok=True)
+
     best, traces, summary = run_refine_loop(
         item=item,
         scheduler=scheduler,
@@ -234,11 +231,10 @@ def main():
         verifier=verifier,
         params=LoopParams(max_rounds=args.max_rounds),
         initial_artifact=initial_artifact,
+        out_dir=out_dir,
     )
 
-    # 5) Write outputs
-    out_dir = ROOT / f"runs/{args.prompt_id}_{args.strategy}"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    # 6) Write outputs
 
     with open(out_dir / "traces.json", "w", encoding="utf-8") as f:
         json.dump([_as_dict(t) for t in traces], f, ensure_ascii=False, indent=2)

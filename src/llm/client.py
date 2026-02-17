@@ -206,7 +206,13 @@ class LLMClient:
 
     @staticmethod
     def _needs_strict_json(task: str) -> bool:
-        return task in {"extract_constraints", "judge_constraint", "verify_pair"}
+        return task in {
+            "extract_constraints",
+            "judge_constraint",       # Legacy task name (kept for compatibility)
+            "judge_constraint_one",   # Used by LLMJudgeBackend.judge_one()
+            "judge_constraint_all",   # Used by LLMJudgeBackend.judge_all()
+            "verify_pair",
+        }
 
     def _call_openai(
         self,
